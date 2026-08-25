@@ -40,6 +40,7 @@ export async function resumeSession(session: SessionFile, message: string, clien
     await sessions.forceRemove(session.sessionId);
     return false;
   }
+  const runtimeConfig = await apiCall("getAgentRuntimeConfig", () => client.getAgentRuntimeConfig(session.agentId, taskId));
 
   const privateKey = (await cryptoBoundary("importKey", () =>
     crypto.subtle.importKey("jwk", session.privateKeyJwk, { name: "Ed25519" } as any, true, ["sign"]),
@@ -56,15 +57,18 @@ export async function resumeSession(session: SessionFile, message: string, clien
   const provider = getProvider(normalizeRuntime(session.runtime));
   const apiUrl = getCredentials().apiUrl;
   const agentClient = new AgentClient(apiUrl, session.agentId, session.sessionId, privateKey);
-  const agentEnv = buildAgentEnv({
-    agentId: session.agentId,
-    sessionId: session.sessionId,
-    privateKeyJwk: session.privateKeyJwk,
-    agentName: session.agentName ?? "Agent",
-    agentUsername: session.agentUsername ?? session.agentId,
-    gpgSubkeyId: session.gpgSubkeyId ?? null,
-    gnupgHome,
-  });
+  const agentEnv = {
+    ...runtimeConfig.env,
+    ...buildAgentEnv({
+      agentId: session.agentId,
+      sessionId: session.sessionId,
+      privateKeyJwk: session.privateKeyJwk,
+      agentName: session.agentName ?? "Agent",
+      agentUsername: session.agentUsername ?? session.agentId,
+      gpgSubkeyId: session.gpgSubkeyId ?? null,
+      gnupgHome,
+    }),
+  };
 
   logger.info(`Resuming task ${taskId} (session=${session.sessionId.slice(0, 8)})`);
 

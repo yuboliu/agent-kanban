@@ -173,6 +173,7 @@ describe("registerCreateCommand agent", () => {
       agent: "agent-1",
       intervalSeconds: "3600",
       heartbeat: "off",
+      reviewEvents: "on",
       paused: true,
       output: "json",
     });
@@ -181,8 +182,23 @@ describe("registerCreateCommand agent", () => {
       agent_id: "agent-1",
       interval_seconds: 3600,
       heartbeat_enabled: false,
+      review_enabled: true,
       status: "paused",
     });
     expect(output).toHaveBeenCalledWith({ id: "maintainer-1", board_id: "board-1", agent_id: "agent-1" }, "json", expect.any(Function));
+  });
+
+  it("defaults review-event triggers on for older CLI option fixtures", async () => {
+    const command = await registerCreateMaintainer();
+    createBoardMaintainer.mockResolvedValue({ id: "maintainer-1" });
+
+    await command.action!({
+      board: "board-1",
+      agent: "agent-1",
+      intervalSeconds: "3600",
+      heartbeat: "on",
+    });
+
+    expect(createBoardMaintainer).toHaveBeenCalledWith("board-1", expect.objectContaining({ heartbeat_enabled: true, review_enabled: true }));
   });
 });

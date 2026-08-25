@@ -312,6 +312,10 @@ export interface AmaVault {
   id: string;
 }
 
+export interface AmaVaultSummary extends AmaVault {
+  name: string;
+}
+
 export interface AmaVaultCredential {
   id: string;
   name: string;
@@ -627,16 +631,28 @@ export async function createAmaVault(env: Env, ownerId: string, input: AmaVaultI
   return { id: vault.metadata.uid };
 }
 
+export async function listAmaVaults(env: Env, ownerId: string, projectId: string, search?: string): Promise<AmaVaultSummary[]> {
+  const client = await createAmaClient(env, ownerId, projectId);
+  const page = await withAmaErrorDetails("list vaults", () => client.vaults.list({ limit: 100, ...(search ? { search } : {}) }));
+  return page.data.map((vault) => ({ id: vault.metadata.uid, name: vault.metadata.name }));
+}
+
 export async function listAmaVaultCredentials(env: Env, ownerId: string, projectId: string, vaultId: string): Promise<AmaVaultCredential[]> {
   const client = await createAmaClient(env, ownerId, projectId);
-  const page = await withAmaErrorDetails("list vault credentials", () => client.vaults.listCredentials(vaultId, { limit: 100 }));
-  return page.data.map((credential) => ({
-    id: credential.metadata.uid,
-    name: credential.metadata.name,
-    state: credential.status.phase,
-    updatedAt: credential.metadata.updatedAt,
-    dataKeys: credential.status.activeVersion?.spec.dataKeys ?? [],
-  }));
+  try {
+    const page = await client.vaults.listCredentials(vaultId, { limit: 100 });
+    return page.data.map((credential) => ({
+      id: credential.metadata.uid,
+      name: credential.metadata.name,
+      state: credential.status.phase,
+      updatedAt: credential.metadata.updatedAt,
+      dataKeys: credential.status.activeVersion?.spec.dataKeys ?? [],
+    }));
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return [];
+    throwIfAmaAuthError(error);
+    throw error;
+  }
 }
 
 export async function createAmaEnvironment(env: Env, ownerId: string, input: AmaEnvironmentInput): Promise<AmaEnvironment> {
@@ -704,7 +720,13 @@ export async function updateAmaAgentConfig(env: Env, ownerId: string, projectId:
 // lists, history preserved). Archive is the {archived:true} lifecycle PATCH.
 export async function archiveAmaAgent(env: Env, ownerId: string, projectId: string, agentId: string): Promise<void> {
   const client = await createAmaClient(env, ownerId, projectId);
-  await withAmaErrorDetails("archive runtime agent", () => client.agents.update(agentId, { archived: true }));
+  try {
+    await client.agents.update(agentId, { archived: true });
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return;
+    throwIfAmaAuthError(error);
+    throw error;
+  }
 }
 
 export async function archiveAmaEnvironment(env: Env, ownerId: string, projectId: string, environmentId: string): Promise<void> {
@@ -839,7 +861,13 @@ export async function revokeAmaVaultCredential(
   reason = "AK agent session closed",
 ): Promise<void> {
   const client = await createAmaClient(env, ownerId, projectId);
-  await client.vaults.updateCredential(vaultId, credentialId, { state: "revoked", revokeReason: reason });
+  try {
+    await client.vaults.updateCredential(vaultId, credentialId, { state: "revoked", revokeReason: reason });
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return;
+    throwIfAmaAuthError(error);
+    throw error;
+  }
 }
 
 export async function sendAmaSessionMessage(
@@ -1159,7 +1187,13 @@ export async function deleteAmaScheduledAgentTrigger(env: Env, ownerId: string, 
 
 export async function deleteAmaTrigger(env: Env, ownerId: string, projectId: string, triggerId: string): Promise<void> {
   const client = await createAmaClient(env, ownerId, projectId);
-  await withAmaErrorDetails("delete trigger", () => client.triggers.delete(triggerId));
+  try {
+    await client.triggers.delete(triggerId);
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return;
+    throwIfAmaAuthError(error);
+    throw error;
+  }
 }
 
 export async function createAmaMemoryStore(env: Env, ownerId: string, input: AmaMemoryStoreInput): Promise<AmaMemoryStore> {
@@ -1195,7 +1229,13 @@ export async function listAmaMemoryStoreMemories(
 
 export async function archiveAmaMemoryStore(env: Env, ownerId: string, projectId: string, storeId: string): Promise<void> {
   const client = await createAmaClient(env, ownerId, projectId);
-  await withAmaErrorDetails("archive memory store", () => client.memoryStores.update(storeId, { archived: true }));
+  try {
+    await client.memoryStores.update(storeId, { archived: true });
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return;
+    throwIfAmaAuthError(error);
+    throw error;
+  }
 }
 
 export async function dispatchAmaHttpTriggerRun(env: Env, ownerId: string, input: AmaHttpTriggerRunInput): Promise<AmaTriggerRun> {

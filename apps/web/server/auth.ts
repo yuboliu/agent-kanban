@@ -28,6 +28,7 @@ const ROUTE_RULES: { method: string; pattern: RegExp; rule: RouteRule }[] = [
   { method: "POST", pattern: /^\/api\/agents$/, rule: { allow: ["user", "machine", "agent:leader"] } },
   { method: "PATCH", pattern: /^\/api\/agents\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "DELETE", pattern: /^\/api\/agents\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
+  { method: "GET", pattern: /^\/api\/agents\/[^/]+\/runtime-config$/, rule: { allow: ["machine"] } },
 
   // Subagents — configuration only, no cryptographic identity
   { method: "POST", pattern: /^\/api\/subagents$/, rule: { allow: ["user", "machine", "agent:leader"] } },
@@ -66,6 +67,7 @@ const ROUTE_RULES: { method: string; pattern: RegExp; rule: RouteRule }[] = [
   { method: "PATCH", pattern: /^\/api\/boards\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "DELETE", pattern: /^\/api\/boards\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers$/, rule: { allow: ["user", "agent:leader"] } },
+  { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/local-runs$/, rule: { allow: ["machine"] } },
   { method: "GET", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/variables$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "PUT", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/variables$/, rule: { allow: ["user", "agent:leader"] } },
   {

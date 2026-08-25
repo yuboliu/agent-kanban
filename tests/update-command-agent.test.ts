@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const updateAgent = vi.fn();
 const updateSubagent = vi.fn();
+const updateBoardMaintainer = vi.fn();
 const output = vi.fn();
 
 vi.mock("../packages/cli/src/agent/leader.js", () => ({
   createClient: vi.fn(async () => ({
     updateAgent,
     updateSubagent,
+    updateBoardMaintainer,
   })),
 }));
 
@@ -67,6 +69,13 @@ async function registerUpdateSubagent(): Promise<CapturedCommand> {
   return commands.get("subagent <id>")!;
 }
 
+async function registerUpdateMaintainer(): Promise<CapturedCommand> {
+  const { registerUpdateCommand } = await import("../packages/cli/src/commands/update.js");
+  const commands = new Map<string, CapturedCommand>();
+  registerUpdateCommand(buildProgram((name, command) => commands.set(name, command)));
+  return commands.get("maintainer <id>")!;
+}
+
 async function runUpdateAgent(opts: Record<string, string | undefined>): Promise<void> {
   const command = await registerUpdateAgent();
   await command.action!("agent-1", opts);
@@ -76,6 +85,7 @@ describe("registerUpdateCommand agent", () => {
   beforeEach(() => {
     updateAgent.mockReset();
     updateSubagent.mockReset();
+    updateBoardMaintainer.mockReset();
     output.mockReset();
   });
 
@@ -130,6 +140,23 @@ describe("registerUpdateCommand agent", () => {
 
     expect(updateSubagent).toHaveBeenCalledWith("subagent-1", {
       models: { claude: "sonnet", codex: "gpt-5.1-codex" },
+    });
+  });
+
+  it("updates review-event and heartbeat trigger modes", async () => {
+    const command = await registerUpdateMaintainer();
+    updateBoardMaintainer.mockResolvedValue({ id: "maintainer-1" });
+
+    await command.action!("maintainer-1", {
+      board: "board-1",
+      heartbeat: "off",
+      reviewEvents: "on",
+      output: "json",
+    });
+
+    expect(updateBoardMaintainer).toHaveBeenCalledWith("board-1", "maintainer-1", {
+      heartbeat_enabled: false,
+      review_enabled: true,
     });
   });
 });

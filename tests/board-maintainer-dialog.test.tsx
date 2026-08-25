@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS } from "@agent-kanban/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
@@ -40,6 +41,7 @@ function renderDialog() {
           agent_id: "agent-1",
           interval_seconds: 3600,
           heartbeat_enabled: false,
+          review_enabled: true,
         },
         open: true,
         onOpenChange: vi.fn(),
@@ -69,6 +71,25 @@ describe("BoardMaintainerDialog", () => {
         body: {
           interval_seconds: 3600,
           heartbeat_enabled: false,
+          review_enabled: true,
+        },
+      });
+    });
+  });
+
+  it("uses the default interval for review-only mode when the disabled interval is invalid", async () => {
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText("Interval seconds"), { target: { value: "not-a-number" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(updateMutateAsync).toHaveBeenCalledWith({
+        maintainerId: "maintainer-1",
+        body: {
+          interval_seconds: MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS,
+          heartbeat_enabled: false,
+          review_enabled: true,
         },
       });
     });

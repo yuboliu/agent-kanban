@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
+import { BoardMaintainerDialog } from "../components/BoardMaintainerDialog";
 import { AmaSessionChat } from "../components/ChatPanel";
 import { Header } from "../components/Header";
 import { formatRelative } from "../components/TaskDetailFields";
@@ -94,6 +95,7 @@ export function MaintainerDetailPage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<MaintainerSession | null>(null);
   const [variablesDialogOpen, setVariablesDialogOpen] = useState(false);
+  const [schedulerDialogOpen, setSchedulerDialogOpen] = useState(false);
 
   useEffect(() => {
     if (memories.length === 0) {
@@ -145,16 +147,24 @@ export function MaintainerDetailPage() {
                 <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-content-tertiary">{maintainer.status}</span>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={refreshAll}>
-              <RefreshCw className="size-3.5" />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSchedulerDialogOpen(true)}>
+                <Pencil className="size-3.5" />
+                Edit triggers
+              </Button>
+              <Button variant="outline" size="sm" onClick={refreshAll}>
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </Button>
+            </div>
           </div>
         </div>
 
         <div className="grid gap-3 rounded-lg border border-border bg-surface-secondary p-3 sm:grid-cols-5">
           <Metric label="Agent" value={maintainer.agent_id ?? "unbound"} />
           <Metric label="Heartbeat" value={maintainer.heartbeat_enabled === false ? "off" : "on"} />
+          <Metric label="Review events" value={maintainer.review_enabled === false ? "off" : "on"} />
+          <Metric label="Scheduler" value={maintainer.scheduler_type === "local" ? "local ak start" : "AMA"} />
           <Metric label="Interval" value={formatInterval(maintainer.interval_seconds)} />
           <Metric label="Last run" value={maintainer.last_run_at ? formatRelative(maintainer.last_run_at) : "never"} />
           <Metric label="Last session" value={maintainer.last_session_id ?? "none"} />
@@ -225,6 +235,15 @@ export function MaintainerDetailPage() {
         saving={updateVariables.isPending}
         onOpenChange={setVariablesDialogOpen}
         onSave={saveVariables}
+      />
+      <BoardMaintainerDialog
+        boardId={boardId}
+        maintainer={maintainer}
+        open={schedulerDialogOpen}
+        onOpenChange={(open) => {
+          setSchedulerDialogOpen(open);
+          if (!open) void refreshMaintainer();
+        }}
       />
     </div>
   );

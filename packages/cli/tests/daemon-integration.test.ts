@@ -200,6 +200,7 @@ function makeApiClient(overrides: Record<string, unknown> = {}) {
     getTaskNotes: vi.fn().mockResolvedValue([]),
     listTasks: vi.fn().mockResolvedValue([]),
     listRepositories: vi.fn().mockResolvedValue([]),
+    getAgentRuntimeConfig: vi.fn().mockResolvedValue({ env: {} }),
     ...overrides,
   };
 }

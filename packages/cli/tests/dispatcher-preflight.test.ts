@@ -64,6 +64,7 @@ vi.mock("../src/workspace/workspace.js", () => ({
   isDirectRepoDirInUse: () => false,
 }));
 vi.mock("../src/daemon/boundaries.js", () => ({
+  apiCall: async (_name: string, fn: () => unknown) => await fn(),
   apiCallIdempotent: async (_name: string, fn: () => unknown) => await fn(),
   apiCallOptional: async (_name: string, fn: () => unknown) => {
     try {
@@ -102,6 +103,8 @@ function agent() {
     name: "Codex Worker",
     username: "codex-worker",
     runtime: "codex",
+    model: "gpt-5.4",
+    reasoning_effort: "high",
     status: { schedulable: true },
     skills: ["owner/repo@skill"],
     subagents: ["sub-1"],
@@ -113,6 +116,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     listTasks: vi.fn(async () => [task()]),
     listRepositories: vi.fn(async () => [{ id: "repo-1", url: "https://github.com/owner/repo" }]),
     getAgent: vi.fn(async () => agent()),
+    getAgentRuntimeConfig: vi.fn(async () => ({ env: {} })),
     listSubagents: vi.fn(async () => [{ id: "sub-1", name: "Helper", username: "helper", role: "helper", soul: "help", models: {} }]),
     getTask: vi.fn(async () => ({ status: "in_progress" })),
     createSession: vi.fn(async () => ({ ok: true })),
@@ -156,6 +160,48 @@ describe("dispatcher preparation transaction", () => {
 
     expect(mocks.prepareSkillSnapshots.mock.invocationCallOrder[0]).toBeLessThan((h.client.listSubagents as any).mock.invocationCallOrder[0]);
     expect((h.client.listSubagents as any).mock.invocationCallOrder[0]).toBeLessThan(mocks.createRepoWorkspace.mock.invocationCallOrder[0]);
+  });
+
+  it("fetches runtime config per dispatch and lets AK identity override relay environment", async () => {
+    const h = harness({
+      getAgentRuntimeConfig: vi.fn(async () => ({
+        env: {
+          ANTHROPIC_BASE_URL: "https://relay.test",
+          ANTHROPIC_AUTH_TOKEN: "relay-token",
+          AK_AGENT_ID: "attacker-agent",
+          AK_SESSION_ID: "attacker-session",
+          AK_API_URL: "https://attacker.test",
+        },
+      })),
+    });
+
+    await expect(dispatch(h)).resolves.toBe(true);
+
+    expect(h.client.getAgentRuntimeConfig).toHaveBeenCalledWith("agent-1", "task-1");
+    expect(h.pool.spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        agentEnv: expect.objectContaining({
+          ANTHROPIC_BASE_URL: "https://relay.test",
+          ANTHROPIC_AUTH_TOKEN: "relay-token",
+          AK_AGENT_ID: "agent-1",
+          AK_API_URL: "http://ak.test",
+        }),
+      }),
+    );
+    expect(h.pool.spawnAgent.mock.calls[0]?.[0].agentEnv.AK_SESSION_ID).not.toBe("attacker-session");
+  });
+
+  it("does not create a session, workspace, or provider process when runtime config fails", async () => {
+    const h = harness({ getAgentRuntimeConfig: vi.fn(async () => Promise.reject(new Error("relay unavailable"))) });
+
+    await expect(dispatch(h)).rejects.toThrow("relay unavailable");
+
+    expect(h.client.createSession).not.toHaveBeenCalled();
+    expect(mocks.sessionCreate).not.toHaveBeenCalled();
+    expect(mocks.createRepoWorkspace).not.toHaveBeenCalled();
+    expect(h.pool.spawnAgent).not.toHaveBeenCalled();
   });
 
   it.each(["skills", "subagents"])("does not create a worktree or branch when %s preflight fails", async (phase) => {

@@ -93,7 +93,9 @@ import {
   listAmaSessions,
   listAmaTriggerRuns,
   listAmaVaultCredentials,
+  listAmaVaults,
   readAmaSession,
+  revokeAmaVaultCredential,
   updateAmaHttpAgentTrigger,
   updateAmaScheduledAgentTrigger,
   updateAmaVaultCredentialSecret,
@@ -102,6 +104,7 @@ import { authMiddleware } from "./auth";
 import { createAuth, hasAmaResources } from "./betterAuth";
 import {
   type BoardMaintainer,
+  claimBoardMaintainerCreation,
   createBoardMaintainer,
   deleteBoardMaintainer,
   getBoardMaintainer,
@@ -109,7 +112,10 @@ import {
   isActiveMaintainerForBoard,
   isActiveMaintainerForRepository,
   listBoardMaintainers,
+  listBoardMaintainersForAgentLineage,
   markBoardMaintainerHttpTriggerSerialized,
+  markLocalBoardMaintainerRun,
+  releaseBoardMaintainerCreation,
   setBoardMaintainerApiKeyId,
   setBoardMaintainerVaultId,
   updateBoardMaintainer,
@@ -169,6 +175,7 @@ import {
   deleteRelayEndpoint,
   getRelayEndpoint,
   listRelayEndpoints,
+  relayRuntimeEnv,
   toPublicConfig,
   updateRelayEndpoint,
 } from "./relayEndpointRepo";
@@ -207,6 +214,8 @@ import {
   deleteTaskAfterFailedDispatch,
   failTask,
   finalizeTaskAssignment,
+  getActiveMaintainerTriggerTask,
+  getLatestMaintainerTriggerTask,
   getTask,
   getTaskActions,
   getTaskErrors,
@@ -436,6 +445,18 @@ function validateMaintainerHeartbeatEnabled(heartbeatEnabled: unknown): void {
   }
 }
 
+function validateMaintainerReviewEnabled(reviewEnabled: unknown): void {
+  if (reviewEnabled !== undefined && typeof reviewEnabled !== "boolean") {
+    throw new HTTPException(400, { message: "review_enabled must be a boolean" });
+  }
+}
+
+function validateMaintainerTriggerModes(heartbeatEnabled: boolean, reviewEnabled: boolean): void {
+  if (!heartbeatEnabled && !reviewEnabled) {
+    throw new HTTPException(400, { message: "Enable at least one maintainer trigger: review events or scheduled heartbeat" });
+  }
+}
+
 function maintainerScheduledStatus(status: "active" | "paused", heartbeatEnabled: boolean): "active" | "paused" {
   return status === "active" && heartbeatEnabled ? "active" : "paused";
 }
@@ -453,7 +474,7 @@ function publicBoardMaintainer(
   | "last_ama_session_id"
   | "prompt"
   | "api_key_id"
-> {
+> & { scheduler_type: "local" | "ama" } {
   const {
     ama_schedule_id: _scheduleId,
     ama_http_trigger_id: _httpTriggerId,
@@ -466,12 +487,15 @@ function publicBoardMaintainer(
     api_key_id: _apiKeyId,
     ...publicMaintainer
   } = maintainer;
-  return publicMaintainer;
+  return {
+    ...publicMaintainer,
+    scheduler_type: isLocalBoardMaintainer(maintainer) ? ("local" as const) : ("ama" as const),
+  };
 }
 
 async function publicBoardMaintainerWithAmaStatus(db: D1, env: Env, ownerId: string, maintainer: BoardMaintainer) {
   const publicMaintainer = publicBoardMaintainer(maintainer);
-  if (!isAmaTaskDispatchConfigured(env)) return publicMaintainer;
+  if (!isAmaTaskDispatchConfigured(env) || isLocalBoardMaintainer(maintainer)) return publicMaintainer;
 
   const projectId = await getAmaProjectId(db, ownerId);
   if (!projectId) return publicMaintainer;
@@ -487,6 +511,54 @@ async function publicBoardMaintainerWithAmaStatus(db: D1, env: Env, ownerId: str
 
 async function listPublicMaintainersWithAmaStatus(db: D1, env: Env, ownerId: string, maintainers: BoardMaintainer[]) {
   return await Promise.all(maintainers.map((maintainer) => publicBoardMaintainerWithAmaStatus(db, env, ownerId, maintainer)));
+}
+
+async function deleteBoardMaintainerExternalResources(
+  db: D1,
+  env: Env,
+  ownerId: string,
+  maintainer: BoardMaintainer,
+  deletingMaintainerIds: ReadonlySet<string> = new Set([maintainer.id]),
+): Promise<void> {
+  if (isLocalBoardMaintainer(maintainer)) return;
+  if (!isAmaTaskDispatchConfigured(env)) {
+    throw new HTTPException(409, { message: "AMA scheduler must be configured before deleting this maintainer" });
+  }
+  const amaProjectId = await resolveAmaProjectId(db, env, ownerId);
+  await deleteAmaScheduledAgentTrigger(env, ownerId, amaProjectId, maintainer.ama_schedule_id);
+  if (maintainer.ama_http_trigger_id) await deleteAmaTrigger(env, ownerId, amaProjectId, maintainer.ama_http_trigger_id);
+  if (maintainer.ama_memory_store_id) await archiveAmaMemoryStore(env, ownerId, amaProjectId, maintainer.ama_memory_store_id);
+  const survivingMaintainers = (await listBoardMaintainers(db, ownerId, maintainer.board_id)).filter(
+    (candidate) => !deletingMaintainerIds.has(candidate.id),
+  );
+  const sharedVault =
+    maintainer.ama_board_vault_id != null && survivingMaintainers.some((candidate) => candidate.ama_board_vault_id === maintainer.ama_board_vault_id);
+  if (!sharedVault && maintainer.ama_board_vault_id) {
+    const credentials = await listAmaVaultCredentials(env, ownerId, amaProjectId, maintainer.ama_board_vault_id);
+    const maintainerCredentials = credentials.filter(
+      (credential) => credential.name === AK_VARIABLES_CREDENTIAL_NAME && credential.state === "active",
+    );
+    for (const credential of maintainerCredentials) {
+      await revokeAmaVaultCredential(env, ownerId, amaProjectId, maintainer.ama_board_vault_id, credential.id, "AK board maintainer deleted");
+    }
+  }
+  const sharedApiKey =
+    maintainer.api_key_id != null &&
+    survivingMaintainers.some(
+      (candidate) =>
+        candidate.api_key_id === maintainer.api_key_id ||
+        (candidate.api_key_id == null && maintainer.ama_board_vault_id != null && candidate.ama_board_vault_id === maintainer.ama_board_vault_id),
+    );
+  if (!sharedApiKey && maintainer.api_key_id) {
+    const authCtx = await createAuth(env).$context;
+    await authCtx.adapter.delete({
+      model: "apikey",
+      where: [
+        { field: "id", value: maintainer.api_key_id },
+        { field: "referenceId", value: ownerId },
+      ],
+    });
+  }
 }
 
 async function availableRuntimeNames(db: D1, env: Env, ownerId: string): Promise<Set<string>> {
@@ -1511,6 +1583,30 @@ api.get("/api/agents/:id", async (c) => {
   return c.json({ ...withRuntimeSource(c.env, agent, availableRuntimes), logs });
 });
 
+api.get("/api/agents/:id/runtime-config", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const agent = await getAgent(c.env.DB, c.req.param("id"), ownerId);
+  if (!agent) throw new HTTPException(404, { message: "Agent not found" });
+  const taskId = c.req.query("task_id");
+  if (!taskId) throw new HTTPException(400, { message: "task_id is required" });
+  const task = await getTask(c.env.DB, taskId, ownerId);
+  if (
+    !task ||
+    task.assigned_to !== agent.id ||
+    taskRuntimeSource(task) !== "legacy" ||
+    !["todo", "in_progress", "in_review", "error"].includes(task.status)
+  ) {
+    throw new HTTPException(403, { message: "Task is not an active local assignment for this agent" });
+  }
+
+  c.header("Cache-Control", "no-store");
+  if (!agent.relay_id) return c.json({ env: {} });
+  const relay = await getRelayEndpoint(c.env.DB, agent.relay_id, ownerId);
+  if (!relay) throw new HTTPException(409, { message: "Agent relay endpoint no longer exists" });
+  return c.json({ env: { ...relayRuntimeEnv(relay), ANTHROPIC_AUTH_TOKEN: relay.token } });
+});
+
 api.post("/api/agents", async (c) => {
   const body = await c.req.json<{
     name?: string;
@@ -1700,13 +1796,23 @@ api.delete("/api/agents/:id", async (c) => {
   if (!agent) throw new HTTPException(404, { message: "Agent not found" });
   if (agent.builtin) throw new HTTPException(403, { message: "Built-in agents cannot be deleted" });
   if (agent.version !== "latest") throw new HTTPException(409, { message: "Agent snapshots cannot be deleted directly" });
+  const maintainers = await listBoardMaintainersForAgentLineage(c.env.DB, ownerId, agent.username);
+  const deletingMaintainerIds = new Set(maintainers.map((maintainer) => maintainer.id));
+  for (const maintainer of maintainers) {
+    await deleteBoardMaintainerExternalResources(c.env.DB, c.env, ownerId, maintainer, deletingMaintainerIds);
+  }
   // AMA has no hard delete; archive the AMA agent (soft delete, keeps history).
-  if (isAmaTaskDispatchConfigured(c.env) && agent.ama_agent_id) {
+  if (agent.ama_agent_id) {
+    if (!isAmaTaskDispatchConfigured(c.env)) {
+      throw new HTTPException(409, { message: "AMA scheduler must be configured before deleting this agent" });
+    }
     const amaProjectId = await getAmaProjectId(c.env.DB, ownerId);
-    if (amaProjectId) await archiveAmaAgent(c.env, ownerId, amaProjectId, agent.ama_agent_id);
+    if (!amaProjectId) throw new HTTPException(409, { message: "AMA project mapping is required before deleting this agent" });
+    await archiveAmaAgent(c.env, ownerId, amaProjectId, agent.ama_agent_id);
   }
   const email = agentEmail(agent.username);
-  await deleteAgent(c.env.DB, agent.id);
+  await deleteAgent(c.env.DB, agent.id, [...deletingMaintainerIds]);
+  logger.info(`agent deleted: owner=${ownerId} agent=${agent.id} username=${agent.username} maintainers=${maintainers.length}`);
   const remaining = await c.env.DB.prepare("SELECT 1 FROM agents WHERE username = ? LIMIT 1").bind(agent.username).first();
   if (c.env.MAILS_ADMIN_TOKEN && !remaining) {
     await deleteMailbox(c.env.MAILS_ADMIN_TOKEN, email);
@@ -2358,16 +2464,14 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   // deployments (Hono dev server + local daemon) create the maintainer row
   // directly and let the local daemon schedule the maintainer agent.
   const amaConfigured = isAmaTaskDispatchConfigured(c.env);
-  if (amaConfigured) {
-    await requireAmaConnected(c.env.DB, c.env, c.get("ownerId"));
-  }
-
   const ownerId = c.get("ownerId");
   const boardId = c.req.param("id");
   const body = await c.req.json<{
     agent_id?: string;
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
+    review_enabled?: boolean;
+    scheduler_type?: "local" | "ama";
     status?: "active" | "paused";
   }>();
   const maintainerAgentId = body.agent_id;
@@ -2375,10 +2479,22 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   const intervalSeconds = body.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
   validateMaintainerHeartbeatInterval(intervalSeconds);
   validateMaintainerHeartbeatEnabled(body.heartbeat_enabled);
+  validateMaintainerReviewEnabled(body.review_enabled);
+  if (body.scheduler_type !== undefined && body.scheduler_type !== "local" && body.scheduler_type !== "ama") {
+    throw new HTTPException(400, { message: "scheduler_type must be local or ama" });
+  }
+  if (body.scheduler_type === "ama" && !amaConfigured) {
+    throw new HTTPException(409, { message: "AMA scheduler is not configured" });
+  }
   if (body.status !== undefined && body.status !== "active" && body.status !== "paused") {
     throw new HTTPException(400, { message: "status must be active or paused" });
   }
   const maintainerStatus = body.status ?? "active";
+  const heartbeatEnabled = body.heartbeat_enabled ?? true;
+  const reviewEnabled = body.review_enabled ?? true;
+  const useLocalScheduler = body.scheduler_type === "local" || !amaConfigured;
+  if (!useLocalScheduler) await requireAmaConnected(c.env.DB, c.env, ownerId);
+  validateMaintainerTriggerModes(heartbeatEnabled, reviewEnabled);
 
   const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
   if (!board) throw new HTTPException(404, { message: "Board not found" });
@@ -2386,112 +2502,180 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   if (existingMaintainers.length > 0) {
     throw new HTTPException(409, { message: "Board already has a maintainer" });
   }
+  const maintainerId = newLongId();
+  if (!(await claimBoardMaintainerCreation(c.env.DB, ownerId, boardId, maintainerId))) {
+    throw new HTTPException(409, { message: "Board already has a maintainer" });
+  }
+  let maintainerPersisted = false;
+  const provisioned: {
+    projectId?: string;
+    vaultId?: string;
+    credentialId?: string;
+    apiKeyId?: string;
+    memoryStoreId?: string;
+    scheduleId?: string;
+    httpTriggerId?: string;
+  } = {};
 
-  if (!amaConfigured) {
-    // Local branch. No server-side scheduler exists locally, so heartbeat is
-    // always off; triggering is handled by scripts/local-maintainer-watch.sh.
-    const maintainerAgent = await ensureLocalMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
-    const maintainerId = newLongId();
+  try {
+    if (useLocalScheduler) {
+      // Local trigger configuration is persisted in D1. The scheduler embedded
+      // in `ak start` discovers the row automatically and handles either mode.
+      const maintainerAgent = await ensureLocalMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
+      const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
+        id: maintainerId,
+        boardId,
+        agentId: maintainerAgent.id,
+        // NOT NULL placeholder; the "local:" prefix is self-describing.
+        amaScheduleId: `local:${maintainerId}`,
+        amaHttpTriggerId: null,
+        amaHttpTriggerSerialized: false,
+        amaMemoryStoreId: null,
+        prompt: "",
+        intervalSeconds,
+        heartbeatEnabled,
+        reviewEnabled,
+        status: maintainerStatus,
+        apiKeyId: null,
+      });
+      maintainerPersisted = true;
+      return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, maintainer), 201);
+    }
+
+    const amaProjectId = await resolveAmaProjectId(c.env.DB, c.env, ownerId);
+    provisioned.projectId = amaProjectId;
+    const maintainerAgent = await ensureMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
+    if (maintainerAgent.relay_id) {
+      throw new HTTPException(409, { message: "Relay-backed maintainers must use scheduler_type=local" });
+    }
+    // The trigger is left unpinned: AMA resolves a runner-capable environment for
+    // the runtime at each dispatch, so a daily maintainer lands on whatever
+    // machine is healthy then rather than one picked at creation.
+    const amaRuntime = amaRuntimeName(maintainerAgent.runtime);
+    const amaAgent = await ensureAmaAgentForAkAgent(c.env.DB, c.env, ownerId, maintainerAgentId, amaProjectId, amaRuntime, {
+      memoryEnabled: true,
+    });
+    const resourceName = boardMaintainerResourceName(board.id);
+    const maintainerSessionMetadata = maintainerAmaSessionMetadata(maintainerId);
+    const boardVault = await createBoardMaintainerVault(c.env, ownerId, amaProjectId, board);
+    provisioned.vaultId = boardVault.id;
+    const maintainerKey = await createMaintainerApiKeySecret({
+      env: c.env,
+      ownerId,
+      amaProjectId,
+      vaultId: boardVault.id,
+      boardId,
+      maintainerId,
+      agentId: maintainerAgentId,
+    });
+    provisioned.apiKeyId = maintainerKey.apiKeyId;
+    provisioned.credentialId = maintainerKey.credentialId;
+    const runtimeEnv = maintainerRuntimeEnv({
+      agentId: maintainerAgentId,
+      boardId,
+      maintainerId,
+      apiUrl: apiUrl(c.env, new URL(c.req.url).origin),
+    });
+    const runtimeSecretEnv = await amaRuntimeSecretEnvForCredentialNames(c.env, ownerId, amaProjectId, boardVault.id, [
+      AK_VARIABLES_CREDENTIAL_NAME,
+      USER_VARIABLES_CREDENTIAL_NAME,
+    ]);
+    const memoryStore = await createAmaMemoryStore(c.env, ownerId, {
+      projectId: amaProjectId,
+      name: resourceName,
+      description: `Persistent memory for AK board ${boardId} maintainer.`,
+    });
+    provisioned.memoryStoreId = memoryStore.id;
+    const resourceRefs = [{ type: "memory_store", storeId: memoryStore.id, readOnly: false }];
+    const schedule = await createAmaScheduledAgentTrigger(c.env, ownerId, {
+      projectId: amaProjectId,
+      agentId: amaAgent.id,
+      runtime: amaRuntime,
+      name: boardMaintainerScheduleTriggerName(board.id),
+      promptTemplate: boardMaintainerScheduledPrompt(boardId),
+      intervalSeconds,
+      status: maintainerScheduledStatus(maintainerStatus, heartbeatEnabled),
+      resourceRefs,
+      runtimeEnv,
+      runtimeSecretEnv,
+      metadata: maintainerSessionMetadata,
+    });
+    provisioned.scheduleId = schedule.id;
+    const httpTrigger = await createAmaHttpAgentTrigger(c.env, ownerId, {
+      projectId: amaProjectId,
+      agentId: amaAgent.id,
+      runtime: amaRuntime,
+      name: boardMaintainerHttpTriggerName(board.id),
+      promptTemplate: boardMaintainerHttpPrompt(boardId),
+      status: maintainerScheduledStatus(maintainerStatus, reviewEnabled),
+      resourceRefs,
+      runtimeEnv,
+      runtimeSecretEnv,
+      metadata: maintainerSessionMetadata,
+      concurrency: "serial",
+    });
+    provisioned.httpTriggerId = httpTrigger.id;
+
     const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
       id: maintainerId,
       boardId,
-      agentId: maintainerAgent.id,
-      // NOT NULL placeholder; the "local:" prefix is self-describing.
-      amaScheduleId: `local:${maintainerId}`,
-      amaHttpTriggerId: null,
-      amaHttpTriggerSerialized: false,
-      amaMemoryStoreId: null,
+      agentId: maintainerAgentId,
+      amaScheduleId: schedule.id,
+      amaHttpTriggerId: httpTrigger.id,
+      amaHttpTriggerSerialized: true,
+      amaMemoryStoreId: memoryStore.id,
       prompt: "",
       intervalSeconds,
-      heartbeatEnabled: false,
+      heartbeatEnabled,
+      reviewEnabled,
       status: maintainerStatus,
-      apiKeyId: null,
+      amaBoardVaultId: boardVault.id,
+      apiKeyId: maintainerKey.apiKeyId,
     });
+    maintainerPersisted = true;
     return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, maintainer), 201);
+  } catch (error) {
+    if (!maintainerPersisted) {
+      const compensate = async (label: string, action: () => Promise<unknown>) => {
+        try {
+          await action();
+        } catch (cleanupError) {
+          logger.warn(
+            `Maintainer provisioning cleanup failed (${label}): ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+          );
+        }
+      };
+      if (provisioned.projectId && provisioned.httpTriggerId) {
+        await compensate("http trigger", () => deleteAmaTrigger(c.env, ownerId, provisioned.projectId!, provisioned.httpTriggerId!));
+      }
+      if (provisioned.projectId && provisioned.scheduleId) {
+        await compensate("schedule", () => deleteAmaScheduledAgentTrigger(c.env, ownerId, provisioned.projectId!, provisioned.scheduleId!));
+      }
+      if (provisioned.projectId && provisioned.memoryStoreId) {
+        await compensate("memory store", () => archiveAmaMemoryStore(c.env, ownerId, provisioned.projectId!, provisioned.memoryStoreId!));
+      }
+      if (provisioned.projectId && provisioned.vaultId && provisioned.credentialId) {
+        await compensate("vault credential", () =>
+          revokeAmaVaultCredential(
+            c.env,
+            ownerId,
+            provisioned.projectId!,
+            provisioned.vaultId!,
+            provisioned.credentialId!,
+            "Maintainer provisioning failed",
+          ),
+        );
+      }
+      if (provisioned.apiKeyId) {
+        await compensate("API key", async () => {
+          const authCtx = await createAuth(c.env).$context;
+          await authCtx.adapter.delete({ model: "apikey", where: [{ field: "id", value: provisioned.apiKeyId! }] });
+        });
+      }
+      await releaseBoardMaintainerCreation(c.env.DB, ownerId, boardId, maintainerId);
+    }
+    throw error;
   }
-
-  const heartbeatEnabled = body.heartbeat_enabled ?? true;
-  const amaProjectId = await resolveAmaProjectId(c.env.DB, c.env, ownerId);
-  const maintainerAgent = await ensureMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
-  // The trigger is left unpinned: AMA resolves a runner-capable environment for
-  // the runtime at each dispatch, so a daily maintainer lands on whatever
-  // machine is healthy then rather than one picked at creation.
-  const amaRuntime = amaRuntimeName(maintainerAgent.runtime);
-  const amaAgent = await ensureAmaAgentForAkAgent(c.env.DB, c.env, ownerId, maintainerAgentId, amaProjectId, amaRuntime, {
-    memoryEnabled: true,
-  });
-  const maintainerId = newLongId();
-  const resourceName = boardMaintainerResourceName(board.id);
-  const maintainerSessionMetadata = maintainerAmaSessionMetadata(maintainerId);
-  const boardVault = await createBoardMaintainerVault(c.env, ownerId, amaProjectId, board);
-  const maintainerKey = await createMaintainerApiKeySecret({
-    env: c.env,
-    ownerId,
-    amaProjectId,
-    vaultId: boardVault.id,
-    boardId,
-    maintainerId,
-    agentId: maintainerAgentId,
-  });
-  const runtimeEnv = maintainerRuntimeEnv({
-    agentId: maintainerAgentId,
-    boardId,
-    maintainerId,
-    apiUrl: apiUrl(c.env, new URL(c.req.url).origin),
-  });
-  const runtimeSecretEnv = await amaRuntimeSecretEnvForCredentialNames(c.env, ownerId, amaProjectId, boardVault.id, [
-    AK_VARIABLES_CREDENTIAL_NAME,
-    USER_VARIABLES_CREDENTIAL_NAME,
-  ]);
-  const memoryStore = await createAmaMemoryStore(c.env, ownerId, {
-    projectId: amaProjectId,
-    name: resourceName,
-    description: `Persistent memory for AK board ${boardId} maintainer.`,
-  });
-  const resourceRefs = [{ type: "memory_store", storeId: memoryStore.id, readOnly: false }];
-  const schedule = await createAmaScheduledAgentTrigger(c.env, ownerId, {
-    projectId: amaProjectId,
-    agentId: amaAgent.id,
-    runtime: amaRuntime,
-    name: boardMaintainerScheduleTriggerName(board.id),
-    promptTemplate: boardMaintainerScheduledPrompt(boardId),
-    intervalSeconds,
-    status: maintainerScheduledStatus(maintainerStatus, heartbeatEnabled),
-    resourceRefs,
-    runtimeEnv,
-    runtimeSecretEnv,
-    metadata: maintainerSessionMetadata,
-  });
-  const httpTrigger = await createAmaHttpAgentTrigger(c.env, ownerId, {
-    projectId: amaProjectId,
-    agentId: amaAgent.id,
-    runtime: amaRuntime,
-    name: boardMaintainerHttpTriggerName(board.id),
-    promptTemplate: boardMaintainerHttpPrompt(boardId),
-    status: maintainerStatus,
-    resourceRefs,
-    runtimeEnv,
-    runtimeSecretEnv,
-    metadata: maintainerSessionMetadata,
-    concurrency: "serial",
-  });
-
-  const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
-    id: maintainerId,
-    boardId,
-    agentId: maintainerAgentId,
-    amaScheduleId: schedule.id,
-    amaHttpTriggerId: httpTrigger.id,
-    amaHttpTriggerSerialized: true,
-    amaMemoryStoreId: memoryStore.id,
-    prompt: "",
-    intervalSeconds,
-    heartbeatEnabled,
-    status: maintainerStatus,
-    amaBoardVaultId: boardVault.id,
-    apiKeyId: maintainerKey.apiKeyId,
-  });
-  return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, maintainer), 201);
 });
 
 api.get("/api/boards/:id/maintainers", async (c) => {
@@ -2509,6 +2693,98 @@ api.get("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
   return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, maintainer));
+});
+
+api.post("/api/boards/:id/maintainers/:maintainerId/local-runs", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
+  if (!board) throw new HTTPException(404, { message: "Board not found" });
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  if (!isLocalBoardMaintainer(maintainer)) throw new HTTPException(409, { message: "Only local maintainer runs can be recorded here" });
+  if (maintainer.status !== "active") throw new HTTPException(409, { message: "Board maintainer is not active" });
+  const body = await c.req.json<{ trigger?: "review" | "heartbeat"; task_ids?: string[] }>();
+  if (body.trigger !== "review" && body.trigger !== "heartbeat") {
+    throw new HTTPException(400, { message: "trigger must be review or heartbeat" });
+  }
+  if (body.trigger === "review" && !maintainer.review_enabled) {
+    throw new HTTPException(409, { message: "Review-event trigger is disabled" });
+  }
+  if (body.trigger === "heartbeat" && !maintainer.heartbeat_enabled) {
+    throw new HTTPException(409, { message: "Heartbeat trigger is disabled" });
+  }
+
+  if (body.trigger === "heartbeat") {
+    const latestHeartbeat = await getLatestMaintainerTriggerTask(c.env.DB, ownerId, boardId, maintainer.id, "heartbeat");
+    const anchor = Date.parse(latestHeartbeat?.created_at ?? maintainer.created_at);
+    const dueAt = anchor + maintainer.interval_seconds * 1000;
+    if (Number.isFinite(dueAt) && Date.now() < dueAt) {
+      throw new HTTPException(409, { message: `Heartbeat is not due until ${new Date(dueAt).toISOString()}` });
+    }
+  }
+
+  const active = await getActiveMaintainerTriggerTask(c.env.DB, ownerId, boardId, maintainer.id, body.trigger);
+  if (active) return c.json(active);
+
+  let repositoryId: string | undefined;
+  let title: string;
+  let description: string;
+  if (body.trigger === "review") {
+    if (!Array.isArray(body.task_ids) || body.task_ids.length === 0 || body.task_ids.some((id) => typeof id !== "string" || !id)) {
+      throw new HTTPException(400, { message: "task_ids must contain at least one task ID for review runs" });
+    }
+    const requestedIds = new Set(body.task_ids);
+    const cutoff = Date.now() - 120_000;
+    const reviewTasks = (await listTasks(c.env.DB, ownerId, { board_id: boardId })).filter(
+      (task) => requestedIds.has(task.id) && task.status === "in_review" && Date.parse(task.updated_at) <= cutoff,
+    );
+    if (reviewTasks.length === 0) throw new HTTPException(409, { message: "No requested task is settled in review" });
+    repositoryId = reviewTasks.find((task) => task.repository_id)?.repository_id ?? undefined;
+    const taskLines = reviewTasks.map((task) => `- ${task.id} — ${task.title}${task.pr_url ? ` — PR: ${task.pr_url}` : ""}`).join("\n");
+    title = `Maintainer review: ${reviewTasks.length} task(s) in review`;
+    description = [
+      "Review the following board tasks that are waiting in review:",
+      "",
+      taskLines,
+      "",
+      "Follow the installed ak-maintainer skill. Review the linked work, then complete or reject each reviewed task.",
+    ].join("\n");
+  } else {
+    repositoryId = (await listBoardRepositories(c.env.DB, ownerId, boardId))[0]?.id;
+    title = `Maintainer heartbeat: ${board.name}`;
+    description = [
+      `Run the scheduled maintainer heartbeat for board ${board.id}.`,
+      "Follow the installed ak-maintainer skill, inspect current board and repository health, record durable findings, and create only actionable follow-up tasks.",
+    ].join("\n\n");
+  }
+
+  const { actorType, actorId } = resolveActor(c);
+  try {
+    const task = await createTask(c.env.DB, ownerId, {
+      board_id: boardId,
+      title,
+      description,
+      ...(repositoryId ? { repository_id: repositoryId } : {}),
+      assigned_to: maintainer.agent_id,
+      actorType,
+      actorId,
+      metadata: metadataWithRuntimeSource(
+        { maintainer_id: maintainer.id, maintainer_trigger: body.trigger, maintainer_trigger_version: 1 },
+        "legacy",
+      ),
+    });
+    const dispatched = await dispatchAssignedTask(c.env.DB, c.env, ownerId, task, { apiOrigin: new URL(c.req.url).origin });
+    await markLocalBoardMaintainerRun(c.env.DB, ownerId, boardId, maintainer.id, new Date().toISOString());
+    return c.json(dispatched, 201);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {
+      const raced = await getActiveMaintainerTriggerTask(c.env.DB, ownerId, boardId, maintainer.id, body.trigger);
+      if (raced) return c.json(raced);
+    }
+    throw error;
+  }
 });
 
 api.get("/api/boards/:id/maintainers/:maintainerId/variables", async (c) => {
@@ -2617,30 +2893,33 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   if (!board) throw new HTTPException(404, { message: "Board not found" });
   const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
-  const body = await c.req.json<{ interval_seconds?: number; heartbeat_enabled?: boolean; status?: "active" | "paused" }>();
+  const body = await c.req.json<{
+    interval_seconds?: number;
+    heartbeat_enabled?: boolean;
+    review_enabled?: boolean;
+    status?: "active" | "paused";
+  }>();
   if (body.interval_seconds !== undefined) validateMaintainerHeartbeatInterval(body.interval_seconds);
   validateMaintainerHeartbeatEnabled(body.heartbeat_enabled);
+  validateMaintainerReviewEnabled(body.review_enabled);
   if (body.status !== undefined && body.status !== "active" && body.status !== "paused") {
     throw new HTTPException(400, { message: "status must be active or paused" });
   }
+  const nextHeartbeatEnabled = body.heartbeat_enabled ?? maintainer.heartbeat_enabled;
+  const nextReviewEnabled = body.review_enabled ?? maintainer.review_enabled;
+  validateMaintainerTriggerModes(nextHeartbeatEnabled, nextReviewEnabled);
   if (!isAmaTaskDispatchConfigured(c.env) || isLocalBoardMaintainer(maintainer)) {
-    // Local maintainer: D1 row only — there are no AMA triggers to sync, and no
-    // local heartbeat scheduler exists (review runs are triggered by
-    // scripts/local-maintainer-watch.sh), so enabling heartbeats is a no-op we
-    // reject rather than silently record.
-    if (body.heartbeat_enabled === true) {
-      throw new HTTPException(400, { message: "Local maintainers do not support heartbeats" });
-    }
+    // Local maintainer: D1 stores the trigger modes; `ak start` applies them.
     const updated = await updateBoardMaintainer(c.env.DB, ownerId, boardId, maintainer.id, {
       intervalSeconds: body.interval_seconds,
       heartbeatEnabled: body.heartbeat_enabled,
+      reviewEnabled: body.review_enabled,
       status: body.status,
     });
     if (!updated) throw new HTTPException(404, { message: "Board maintainer not found" });
     return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, updated));
   }
   const nextStatus = body.status ?? (maintainer.status === "archived" ? "paused" : maintainer.status);
-  const nextHeartbeatEnabled = body.heartbeat_enabled ?? maintainer.heartbeat_enabled;
   const amaProjectId = await resolveAmaProjectId(c.env.DB, c.env, ownerId);
   const maintainerAgent = await ensureMaintainerAgentProfile(c.env.DB, ownerId, maintainer.agent_id);
   const amaRuntime = amaRuntimeName(maintainerAgent.runtime);
@@ -2687,7 +2966,7 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
       agentId: amaAgent.id,
       runtime: amaRuntime,
       promptTemplate: boardMaintainerHttpPrompt(boardId),
-      status: body.status,
+      status: body.status !== undefined || body.review_enabled !== undefined ? maintainerScheduledStatus(nextStatus, nextReviewEnabled) : undefined,
       resourceRefs,
       runtimeEnv,
       runtimeSecretEnv,
@@ -2699,6 +2978,7 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const updated = await updateBoardMaintainer(c.env.DB, ownerId, boardId, maintainer.id, {
     intervalSeconds: body.interval_seconds ?? schedule.schedule.intervalSeconds,
     heartbeatEnabled: body.heartbeat_enabled,
+    reviewEnabled: body.review_enabled,
     status: body.status,
   });
   if (!updated) throw new HTTPException(404, { message: "Board maintainer not found" });
@@ -2763,12 +3043,7 @@ api.delete("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   // Hard delete: the AMA trigger (and its runs) and the AK maintainer row are
   // both removed. Pause/resume covers "stop but keep"; delete is permanent.
   // Local (non-AMA) maintainers have no remote resources — just the row.
-  if (isAmaTaskDispatchConfigured(c.env) && !isLocalBoardMaintainer(maintainer)) {
-    const amaProjectId = await resolveAmaProjectId(c.env.DB, c.env, ownerId);
-    await deleteAmaScheduledAgentTrigger(c.env, ownerId, amaProjectId, maintainer.ama_schedule_id);
-    if (maintainer.ama_http_trigger_id) await deleteAmaTrigger(c.env, ownerId, amaProjectId, maintainer.ama_http_trigger_id);
-    if (maintainer.ama_memory_store_id) await archiveAmaMemoryStore(c.env, ownerId, amaProjectId, maintainer.ama_memory_store_id);
-  }
+  await deleteBoardMaintainerExternalResources(c.env.DB, c.env, ownerId, maintainer);
   await deleteBoardMaintainer(c.env.DB, ownerId, boardId, maintainer.id);
   return c.json({ ok: true });
 });
@@ -2812,7 +3087,8 @@ api.delete("/api/boards/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-const AK_MAINTAINER_SKILL_REF = "saltbo/agent-kanban@ak-maintainer";
+const AK_MAINTAINER_SKILL_REF = "ak@ak-maintainer";
+const LEGACY_AK_MAINTAINER_SKILL_REF = "saltbo/agent-kanban@ak-maintainer";
 const AK_MAINTAINER_TAINT: AgentTaint = { key: MAINTAINER_TAINT_KEY, value: "board-maintainer", effect: "NoSchedule" };
 const AMA_BACKFILL_FAILED_TAINT: AgentTaint = { key: AMA_BACKFILL_FAILED_TAINT_KEY, value: "ama-agent-create-failed", effect: "NoSchedule" };
 
@@ -2852,7 +3128,7 @@ function isMaintainerAgentProfile(agent: { kind: string; role?: string | null; s
   return (
     agent.kind === "worker" &&
     (agent.role === "board-maintainer" ||
-      (agent.skills ?? []).includes(AK_MAINTAINER_SKILL_REF) ||
+      (agent.skills ?? []).some((skill) => skill === AK_MAINTAINER_SKILL_REF || skill === LEGACY_AK_MAINTAINER_SKILL_REF) ||
       (agent.taints ?? []).some((taint) => sameTaint(taint, AK_MAINTAINER_TAINT)))
   );
 }
@@ -3053,9 +3329,12 @@ async function syncMaintainerSecretEnvRefs(env: Env, ownerId: string, amaProject
 }
 
 async function createBoardMaintainerVault(env: Env, ownerId: string, amaProjectId: string, board: { id: string; name: string }) {
+  const resourceName = boardMaintainerResourceName(board.id);
+  const existing = (await listAmaVaults(env, ownerId, amaProjectId, resourceName)).find((vault) => vault.name === resourceName);
+  if (existing) return existing;
   return await createAmaVault(env, ownerId, {
     projectId: amaProjectId,
-    name: boardMaintainerResourceName(board.id),
+    name: resourceName,
     description: `Runtime variables for AK board ${board.id}.`,
     scope: "project",
   });
@@ -3118,14 +3397,24 @@ async function createMaintainerApiKeySecret(input: {
       },
     },
   });
-  await createAmaSessionSecret(input.env, input.ownerId, {
-    projectId: input.amaProjectId,
-    vaultId: input.vaultId,
-    name: AK_VARIABLES_CREDENTIAL_NAME,
-    secretData: { [AK_API_KEY_DATA_KEY]: apiKey.key },
-    metadata: { boardId: input.boardId, maintainerId: input.maintainerId, agentId: input.agentId },
-  });
-  return { apiKeyId: apiKey.id };
+  try {
+    const credential = await createAmaSessionSecret(input.env, input.ownerId, {
+      projectId: input.amaProjectId,
+      vaultId: input.vaultId,
+      name: AK_VARIABLES_CREDENTIAL_NAME,
+      secretData: { [AK_API_KEY_DATA_KEY]: apiKey.key },
+      metadata: { boardId: input.boardId, maintainerId: input.maintainerId, agentId: input.agentId },
+    });
+    return { apiKeyId: apiKey.id, credentialId: credential.credentialId };
+  } catch (error) {
+    try {
+      const authCtx = await auth.$context;
+      await authCtx.adapter.delete({ model: "apikey", where: [{ field: "id", value: apiKey.id }] });
+    } catch (cleanupError) {
+      logger.warn(`Maintainer API key cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    throw error;
+  }
 }
 
 function maintainerRuntimeEnv(input: { agentId: string; boardId: string; maintainerId: string; apiUrl: string }): Record<string, string> {

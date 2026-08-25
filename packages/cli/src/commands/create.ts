@@ -140,6 +140,7 @@ export function registerCreateCommand(program: Command) {
     .requiredOption("--agent <id>", "Maintainer agent ID")
     .option("--interval-seconds <seconds>", "Heartbeat interval in seconds", String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS))
     .option("--heartbeat <on|off>", "Scheduled heartbeat switch", "on")
+    .option("--review-events <on|off>", "Review-event trigger switch", "on")
     .option("--paused", "Create maintainer paused")
     .addOption(outputOption())
     .action(async (opts) => {
@@ -153,6 +154,7 @@ export function registerCreateCommand(program: Command) {
         agent_id: opts.agent,
         interval_seconds: intervalSeconds,
         heartbeat_enabled: parseHeartbeat(String(opts.heartbeat)),
+        review_enabled: parseHeartbeat(String(opts.reviewEvents ?? "on")),
       };
       if (opts.paused) body.status = "paused";
       const maintainer = await client.createBoardMaintainer(opts.board, body);

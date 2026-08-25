@@ -209,6 +209,7 @@ export function registerUpdateCommand(program: Command) {
     .option("--board <id>", "Board ID")
     .option("--interval-seconds <seconds>", "Heartbeat interval in seconds")
     .option("--heartbeat <on|off>", "Scheduled heartbeat switch")
+    .option("--review-events <on|off>", "Review-event trigger switch")
     .option("--status <status>", "active or paused")
     .addOption(outputOption())
     .action(async (id: string, opts) => {
@@ -226,6 +227,7 @@ export function registerUpdateCommand(program: Command) {
         body.interval_seconds = intervalSeconds;
       }
       if (opts.heartbeat !== undefined) body.heartbeat_enabled = parseHeartbeat(String(opts.heartbeat));
+      if (opts.reviewEvents !== undefined) body.review_enabled = parseHeartbeat(String(opts.reviewEvents));
       if (opts.status) {
         if (opts.status !== "active" && opts.status !== "paused") {
           console.error("--status must be active or paused");
@@ -234,7 +236,7 @@ export function registerUpdateCommand(program: Command) {
         body.status = opts.status;
       }
       if (Object.keys(body).length === 0) {
-        console.error("Nothing to update. Provide --interval-seconds, --heartbeat, or --status.");
+        console.error("Nothing to update. Provide --interval-seconds, --heartbeat, --review-events, or --status.");
         process.exit(1);
       }
       const client = await createClient();

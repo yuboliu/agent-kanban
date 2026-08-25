@@ -120,6 +120,8 @@ export const api = {
       handoff_to?: string[];
       runtime: AgentRuntime;
       model?: string;
+      reasoning_effort?: string | null;
+      relay_id?: string | null;
       skills?: string[];
     }) => request<any>("POST", "/agents", input),
     update: (id: string, body: Record<string, unknown>) => request<any>("PATCH", `/agents/${id}`, body),

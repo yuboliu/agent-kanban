@@ -225,6 +225,55 @@ export async function createTask(
   };
 }
 
+export async function getActiveMaintainerTriggerTask(
+  db: D1,
+  ownerId: string,
+  boardId: string,
+  maintainerId: string,
+  trigger: "review" | "heartbeat",
+): Promise<Task | null> {
+  const row = await db
+    .prepare(
+      `SELECT t.*
+       FROM tasks t
+       JOIN boards b ON b.id = t.board_id
+       WHERE b.owner_id = ?
+         AND t.board_id = ?
+         AND t.status IN ('todo', 'in_progress', 'in_review', 'error')
+         AND json_extract(t.metadata, '$.maintainer_id') = ?
+         AND json_extract(t.metadata, '$.maintainer_trigger') = ?
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+    )
+    .bind(ownerId, boardId, maintainerId, trigger)
+    .first<Task>();
+  return row ? parseTask(row) : null;
+}
+
+export async function getLatestMaintainerTriggerTask(
+  db: D1,
+  ownerId: string,
+  boardId: string,
+  maintainerId: string,
+  trigger: "review" | "heartbeat",
+): Promise<Task | null> {
+  const row = await db
+    .prepare(
+      `SELECT t.*
+       FROM tasks t
+       JOIN boards b ON b.id = t.board_id
+       WHERE b.owner_id = ?
+         AND t.board_id = ?
+         AND json_extract(t.metadata, '$.maintainer_id') = ?
+         AND json_extract(t.metadata, '$.maintainer_trigger') = ?
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+    )
+    .bind(ownerId, boardId, maintainerId, trigger)
+    .first<Task>();
+  return row ? parseTask(row) : null;
+}
+
 export async function assertTaskOwner(db: D1, taskId: string, ownerId: string): Promise<void> {
   const row = await db
     .prepare("SELECT 1 FROM tasks t JOIN boards b ON t.board_id = b.id WHERE t.id = ? AND b.owner_id = ?")

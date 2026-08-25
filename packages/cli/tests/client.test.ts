@@ -1327,6 +1327,29 @@ describe("ApiClient method stubs", () => {
     expect(JSON.parse(opts.body as string)).toEqual({ name: "Nightly", interval_seconds: 86400, heartbeat_enabled: false });
   });
 
+  it("createLocalBoardMaintainerRun requests an atomic review run", async () => {
+    const c = await makeAgentClient();
+    stubOk({ id: "task-review" });
+
+    await c.createLocalBoardMaintainerRun("board-abc", "maintainer-xyz", { trigger: "review", task_ids: ["task-a", "task-b"] });
+
+    const [url, opts] = lastCall();
+    expect(url).toContain("/api/boards/board-abc/maintainers/maintainer-xyz/local-runs");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ trigger: "review", task_ids: ["task-a", "task-b"] });
+  });
+
+  it("getAgentRuntimeConfig requests the task-scoped machine endpoint", async () => {
+    const c = await makeAgentClient();
+    stubOk({ env: { ANTHROPIC_AUTH_TOKEN: "secret" } });
+
+    await c.getAgentRuntimeConfig("agent-relay", "task with spaces");
+
+    const [url, opts] = lastCall();
+    expect(url).toContain("/api/agents/agent-relay/runtime-config?task_id=task%20with%20spaces");
+    expect(opts.method).toBe("GET");
+  });
+
   it("deleteBoardMaintainer sends DELETE /api/boards/:boardId/maintainers/:maintainerId", async () => {
     const c = await makeAgentClient();
     stubOk({});

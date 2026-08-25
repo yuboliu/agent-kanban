@@ -112,6 +112,7 @@ function makeApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getTask: vi.fn().mockResolvedValue({ status: "in_review" }),
     reopenSession: vi.fn().mockResolvedValue(undefined),
     getAgentGpgKey: vi.fn().mockResolvedValue({ armored_private_key: "", gpg_subkey_id: null }),
+    getAgentRuntimeConfig: vi.fn().mockResolvedValue({ env: {} }),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -199,6 +200,61 @@ describe("resumeSession — existing workspace.cwd proceeds past the guard", () 
       } catch {
         /* ignore */
       }
+    }
+  });
+
+  it("merges fresh relay env without allowing it to replace AK identity and preserves reasoning", async () => {
+    const existingCwd = mkdtempSync(join(tmpdir(), "ak-existing-"));
+    try {
+      const { privateKey } = (await crypto.subtle.generateKey({ name: "Ed25519" } as any, true, ["sign", "verify"])) as CryptoKeyPair;
+      const privateKeyJwk = await crypto.subtle.exportKey("jwk", privateKey);
+      const session = makeSession(existingCwd, { model: "gpt-5.4", reasoningEffort: "high", privateKeyJwk });
+      const client = makeApiClient({
+        getAgentRuntimeConfig: vi.fn().mockResolvedValue({
+          env: {
+            ANTHROPIC_BASE_URL: "https://relay.test",
+            ANTHROPIC_AUTH_TOKEN: "relay-token",
+            AK_AGENT_ID: "attacker-agent",
+            AK_SESSION_ID: "attacker-session",
+          },
+        }),
+      });
+      mockSpawnAgent.mockClear();
+
+      await expect(resumeSession(session, "retry", client, mockPool)).resolves.toBe(true);
+
+      expect(client.getAgentRuntimeConfig).toHaveBeenCalledWith(session.agentId, session.taskId);
+      expect(mockSpawnAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          agentEnv: expect.objectContaining({
+            ANTHROPIC_BASE_URL: "https://relay.test",
+            ANTHROPIC_AUTH_TOKEN: "relay-token",
+            AK_AGENT_ID: session.agentId,
+            AK_SESSION_ID: session.sessionId,
+          }),
+        }),
+      );
+    } finally {
+      rmdirSync(existingCwd);
+    }
+  });
+
+  it("does not reopen, initialize GPG, or spawn when fresh runtime config fails", async () => {
+    const existingCwd = mkdtempSync(join(tmpdir(), "ak-existing-"));
+    try {
+      const session = makeSession(existingCwd, { gpgSubkeyId: "gpg-subkey" });
+      const client = makeApiClient({ getAgentRuntimeConfig: vi.fn().mockRejectedValue(new Error("relay config failed")) });
+      mockSpawnAgent.mockClear();
+
+      await expect(resumeSession(session, "retry", client, mockPool)).rejects.toThrow("relay config failed");
+
+      expect(client.reopenSession).not.toHaveBeenCalled();
+      expect(client.getAgentGpgKey).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+    } finally {
+      rmdirSync(existingCwd);
     }
   });
 });

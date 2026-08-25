@@ -15,6 +15,8 @@ interface BoardMaintainer {
   agent_id?: string;
   interval_seconds: number;
   heartbeat_enabled?: boolean;
+  review_enabled?: boolean;
+  scheduler_type?: "local" | "ama";
 }
 
 interface MaintainerAgent {
@@ -43,28 +45,36 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
   const [agentId, setAgentId] = useState("");
   const [intervalSeconds, setIntervalSeconds] = useState(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
+  const [reviewEnabled, setReviewEnabled] = useState(true);
 
   useEffect(() => {
     if (!open) return;
     setAgentId(maintainer?.agent_id ?? "");
     setIntervalSeconds(String(maintainer?.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
     setHeartbeatEnabled(maintainer?.heartbeat_enabled ?? true);
+    setReviewEnabled(maintainer?.review_enabled ?? true);
   }, [open, maintainer?.id]);
 
   const agents = (agentQuery.data ?? []) as MaintainerAgent[];
   const pending = createMaintainer.isPending || updateMaintainer.isPending;
 
   async function save() {
+    if (!heartbeatEnabled && !reviewEnabled) {
+      toast.error("Enable at least one trigger mode");
+      return;
+    }
     const seconds = Number.parseInt(intervalSeconds, 10);
-    if (!Number.isInteger(seconds) || seconds < MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS) {
+    if (heartbeatEnabled && (!Number.isInteger(seconds) || seconds < MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS)) {
       toast.error("Interval must be at least 3600 seconds");
       return;
     }
+    const savedInterval =
+      Number.isInteger(seconds) && seconds >= MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS ? seconds : MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
     try {
       if (maintainer) {
         await updateMaintainer.mutateAsync({
           maintainerId: maintainer.id,
-          body: { interval_seconds: seconds, heartbeat_enabled: heartbeatEnabled },
+          body: { interval_seconds: savedInterval, heartbeat_enabled: heartbeatEnabled, review_enabled: reviewEnabled },
         });
         toast.success("Maintainer updated");
       } else {
@@ -74,8 +84,9 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
         }
         await createMaintainer.mutateAsync({
           agent_id: agentId,
-          interval_seconds: seconds,
+          interval_seconds: savedInterval,
           heartbeat_enabled: heartbeatEnabled,
+          review_enabled: reviewEnabled,
         });
         toast.success("Maintainer created");
       }
@@ -90,7 +101,9 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit maintainer" : "Add maintainer"}</DialogTitle>
-          <DialogDescription>Maintainers run on a schedule and use AK commands to inspect and operate this board.</DialogDescription>
+          <DialogDescription>
+            Choose how this maintainer is triggered. Local schedules use <code>ak start</code>; AMA deployments use managed triggers.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -121,14 +134,23 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
               value={intervalSeconds}
               onChange={(event) => setIntervalSeconds(event.target.value)}
               inputMode="numeric"
+              disabled={!heartbeatEnabled || pending}
             />
             <p className="text-xs text-content-tertiary">Minimum {MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS} seconds.</p>
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-primary px-3 py-2">
             <div className="min-w-0">
+              <Label htmlFor="maintainer-review-events">Review events</Label>
+              <p className="mt-0.5 text-xs text-content-tertiary">Create a review task after board work reaches In Review.</p>
+            </div>
+            <Switch id="maintainer-review-events" checked={reviewEnabled} onCheckedChange={setReviewEnabled} disabled={pending} />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-primary px-3 py-2">
+            <div className="min-w-0">
               <Label htmlFor="maintainer-heartbeat">Scheduled heartbeat</Label>
-              <p className="mt-0.5 text-xs text-content-tertiary">GitHub events stay active when this is off.</p>
+              <p className="mt-0.5 text-xs text-content-tertiary">Run a periodic health and backlog review.</p>
             </div>
             <Switch id="maintainer-heartbeat" checked={heartbeatEnabled} onCheckedChange={setHeartbeatEnabled} disabled={pending} />
           </div>

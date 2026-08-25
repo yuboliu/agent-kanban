@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # local-maintainer-watch.sh — trigger local board-maintainer review runs.
 #
-# Pure-local deployments (Hono dev server + local D1 + `ak start` local daemon)
-# have no server-side maintainer scheduler. This script is the trigger: when
-# tasks land in `in_review`, it creates one deduped review task assigned to the
-# board's maintainer agent; the local daemon then dispatches it.
+# `ak start` now includes the supported local maintainer scheduler. This script
+# remains as an optional event-driven companion: when tasks land in `in_review`,
+# it calls the same server-side deduped trigger used by the built-in scheduler,
+# so running both cannot create parallel maintainer work.
 #
 # Modes:
 #   watch (default): long-running. Tails the board SSE stream
@@ -72,8 +72,6 @@ if [[ -z "${AK_API_URL:-}" || -z "${AK_API_KEY:-}" ]]; then
 fi
 [[ -n "$AK_API_URL" && -n "$AK_API_KEY" ]] || { echo "error: could not resolve AK API credentials" >&2; exit 1; }
 
-MEMORY_DIR="$HOME/.local/share/agent-kanban/maintainer/$BOARD_ID"
-
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # True when the local daemon is up; without it a review task would sit in todo.
@@ -112,10 +110,17 @@ poll_once() {
   review_tasks="$(ak get task --board "$BOARD_ID" --status in_review -o json 2>/dev/null || echo '[]')"
   [[ "$(jq 'length' <<<"$review_tasks")" -gt 0 ]] || return 0
 
-  local maintainer_agent_id
-  maintainer_agent_id="$(ak get maintainer --board "$BOARD_ID" -o json 2>/dev/null | jq -r '.[0].agent_id // empty')"
+  local maintainer_json maintainer_id maintainer_agent_id review_enabled
+  maintainer_json="$(ak get maintainer --board "$BOARD_ID" -o json 2>/dev/null || echo '[]')"
+  maintainer_id="$(jq -r '.[0].id // empty' <<<"$maintainer_json")"
+  maintainer_agent_id="$(jq -r '.[0].agent_id // empty' <<<"$maintainer_json")"
   if [[ -z "$maintainer_agent_id" ]]; then
     log "no maintainer on board $BOARD_ID (create one with: ak create maintainer --board $BOARD_ID --agent <agent-id>), skipping"
+    return 0
+  fi
+  review_enabled="$(jq -r '.[0].review_enabled // true' <<<"$maintainer_json")"
+  if [[ "$review_enabled" != "true" ]]; then
+    log "review-event trigger is disabled for board $BOARD_ID, skipping"
     return 0
   fi
 
@@ -124,7 +129,7 @@ poll_once() {
   active_reviews="$(ak get task --board "$BOARD_ID" --label maintainer-review -o json 2>/dev/null || echo '[]')"
   local existing
   existing="$(jq --arg a "$maintainer_agent_id" \
-    '[.[] | select(.assigned_to == $a and (.status == "todo" or .status == "in_progress" or .status == "in_review"))] | length' \
+    '[.[] | select(.assigned_to == $a and (.status == "todo" or .status == "in_progress" or .status == "in_review" or .status == "error"))] | length' \
     <<<"$active_reviews")"
   if [[ "$existing" -gt 0 ]]; then
     log "maintainer review task already active, skipping"
@@ -145,33 +150,14 @@ poll_once() {
   done < <(jq -c '.[]' <<<"$pending")
   [[ "$(jq 'length' <<<"$selected")" -gt 0 ]] || return 0
 
-  local repo_id
-  repo_id="$(jq -r '[.[].repository_id | select(. != "")][0] // ""' <<<"$selected")"
-
-  local task_lines
-  task_lines="$(jq -r '.[] | "- " + .id + " — " + .title + (if .pr_url != "" then " — PR: " + .pr_url else "" end)' <<<"$selected")"
-
-  local description
-  description="$(cat <<EOF
-Review the following board tasks that are waiting in review:
-
-$task_lines
-
-Instructions:
-- Follow the installed ak-maintainer skill. When the ak-verify skill is installed, use it as the acceptance standard (its Review step is your code review; its Tests/Regression steps are the verification evidence to require or re-run).
-- Use \`gh pr checkout\` in this workspace to run verification locally when a PR is linked.
-- Circuit breaker: if a task has already been rejected 2 or more times, do NOT reject it again — leave a note on the task summarizing the repeated failure and escalate to a human reviewer.
-- Durable memory: keep cross-run context in $MEMORY_DIR/HEARTBEAT.md (create the directory on first use). This is the local equivalent of AMA maintainer memory.
-EOF
-)"
-
-  log "creating maintainer review task for $(jq 'length' <<<"$selected") task(s)"
-  local args=(task --board "$BOARD_ID" --title "Maintainer review: $(jq -r 'length' <<<"$selected") task(s) in review" \
-    --description "$description" --labels "maintenance,maintainer-review" --assign-to "$maintainer_agent_id")
-  if [[ -n "$repo_id" ]]; then
-    args+=(--repo "$repo_id")
-  fi
-  ak create "${args[@]}" >/dev/null
+  log "requesting maintainer review run for $(jq 'length' <<<"$selected") task(s)"
+  local payload
+  payload="$(jq -cn --argjson ids "$(jq '[.[].id]' <<<"$selected")" '{trigger:"review", task_ids:$ids}')"
+  curl -fsS -X POST \
+    -H "Authorization: Bearer $AK_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data "$payload" \
+    "$AK_API_URL/api/boards/$BOARD_ID/maintainers/$maintainer_id/local-runs" >/dev/null
 }
 
 if [[ "$ONCE" -eq 1 ]]; then

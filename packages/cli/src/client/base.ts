@@ -143,6 +143,9 @@ export abstract class ApiClient {
   getAgent(agentId: string) {
     return this.request("GET", `/api/agents/${agentId}`);
   }
+  getAgentRuntimeConfig(agentId: string, taskId: string) {
+    return this.request<{ env: Record<string, string> }>("GET", `/api/agents/${agentId}/runtime-config?task_id=${encodeURIComponent(taskId)}`);
+  }
   getAgentGpgKey(agentId: string) {
     return this.request<{ armored_private_key: string; gpg_subkey_id: string | null }>("GET", `/api/agents/${agentId}/gpg-key`);
   }
@@ -278,6 +281,9 @@ export abstract class ApiClient {
   }
   updateBoardMaintainer(boardId: string, maintainerId: string, input: Record<string, unknown>) {
     return this.request<any>("PATCH", `/api/boards/${boardId}/maintainers/${maintainerId}`, input);
+  }
+  createLocalBoardMaintainerRun(boardId: string, maintainerId: string, input: { trigger: "review" | "heartbeat"; task_ids?: string[] }) {
+    return this.request<any>("POST", `/api/boards/${boardId}/maintainers/${maintainerId}/local-runs`, input);
   }
   deleteBoardMaintainer(boardId: string, maintainerId: string) {
     return this.request<any>("DELETE", `/api/boards/${boardId}/maintainers/${maintainerId}`);

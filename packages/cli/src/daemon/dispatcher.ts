@@ -29,7 +29,7 @@ import {
   createTempWorkspace,
   isDirectRepoDirInUse,
 } from "../workspace/workspace.js";
-import { apiCallIdempotent, apiCallOptional, cryptoBoundary, execBoundary, fsSync } from "./boundaries.js";
+import { apiCall, apiCallIdempotent, apiCallOptional, cryptoBoundary, execBoundary, fsSync } from "./boundaries.js";
 import type { PrMonitor } from "./prMonitor.js";
 import type { RateLimiter } from "./rateLimiter.js";
 import type { RuntimeCircuitBreaker } from "./runtimeCircuitBreaker.js";
@@ -294,6 +294,7 @@ async function dispatchOne(
     logger.error(`Agent ${agentId} not found, skipping task ${task.id}`);
     return false;
   }
+  const runtimeConfig = await apiCall("getAgentRuntimeConfig", () => client.getAgentRuntimeConfig(agentId, task.id));
   const providerName = normalizeRuntime(agentDetails.runtime);
   const provider = getProvider(providerName);
   const skillSnapshots = await prepareSkillSnapshots(agentDetails.skills ?? [], client);
@@ -439,15 +440,18 @@ async function dispatchOne(
 
     const apiUrl = getCredentials().apiUrl;
     const agentClient = new AgentClient(apiUrl, agentId, sessionId, privateKey);
-    const agentEnv = buildAgentEnv({
-      agentId,
-      sessionId,
-      privateKeyJwk: privKeyJwk,
-      agentName: agentDetails.name,
-      agentUsername: (agentDetails as any).username ?? agentId,
-      gpgSubkeyId,
-      gnupgHome,
-    });
+    const agentEnv = {
+      ...runtimeConfig.env,
+      ...buildAgentEnv({
+        agentId,
+        sessionId,
+        privateKeyJwk: privKeyJwk,
+        agentName: agentDetails.name,
+        agentUsername: (agentDetails as any).username ?? agentId,
+        gpgSubkeyId,
+        gnupgHome,
+      }),
+    };
     const systemPromptFile = writePromptFile(sessionId, generateSystemPrompt(agentDetails, boardType, subagents));
     promptCreated = true;
     const taskContext = [

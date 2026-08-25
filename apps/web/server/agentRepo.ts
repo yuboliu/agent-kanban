@@ -610,21 +610,59 @@ export async function upsertLatestAgent(db: D1, agent: PreparedAgent, extras?: {
   return updated;
 }
 
-export async function deleteAgent(db: D1, agentId: string): Promise<boolean> {
+export async function deleteAgent(db: D1, agentId: string, cleanedMaintainerIds: string[]): Promise<boolean> {
   const agent = await db
     .prepare("SELECT owner_id, username, version FROM agents WHERE id = ?")
     .bind(agentId)
     .first<Pick<Agent, "owner_id" | "username" | "version">>();
   if (!agent || agent.version !== "latest") return false;
 
-  await db
-    .prepare(
-      "UPDATE tasks SET assigned_to = NULL WHERE assigned_to IN (SELECT id FROM agents WHERE owner_id = ? AND username = ?) AND status IN ('todo', 'in_progress')",
-    )
-    .bind(agent.owner_id, agent.username)
-    .run();
-  const result = await db.prepare("DELETE FROM agents WHERE owner_id = ? AND username = ?").bind(agent.owner_id, agent.username).run();
-  return result.meta.changes > 0;
+  const lineage = "SELECT id FROM agents WHERE owner_id = ? AND username = ?";
+  const statements = [
+    db
+      .prepare(`UPDATE tasks SET assigned_to = NULL WHERE assigned_to IN (${lineage}) AND status IN ('todo', 'in_progress')`)
+      .bind(agent.owner_id, agent.username),
+  ];
+  if (cleanedMaintainerIds.length > 0) {
+    const placeholders = cleanedMaintainerIds.map(() => "?").join(", ");
+    statements.push(
+      db
+        .prepare(
+          `UPDATE board_maintainer_claims
+           SET maintainer_id = (
+             SELECT survivor.id FROM board_maintainers survivor
+             WHERE survivor.owner_id = board_maintainer_claims.owner_id
+               AND survivor.board_id = board_maintainer_claims.board_id
+               AND survivor.status != 'archived'
+               AND survivor.id NOT IN (${placeholders})
+             ORDER BY survivor.created_at ASC
+             LIMIT 1
+           )
+           WHERE owner_id = ? AND maintainer_id IN (${placeholders})
+             AND EXISTS (
+               SELECT 1 FROM board_maintainers survivor
+               WHERE survivor.owner_id = board_maintainer_claims.owner_id
+                 AND survivor.board_id = board_maintainer_claims.board_id
+                 AND survivor.status != 'archived'
+                 AND survivor.id NOT IN (${placeholders})
+             )`,
+        )
+        .bind(...cleanedMaintainerIds, agent.owner_id, ...cleanedMaintainerIds, ...cleanedMaintainerIds),
+      db
+        .prepare(`DELETE FROM board_maintainer_claims WHERE owner_id = ? AND maintainer_id IN (${placeholders})`)
+        .bind(agent.owner_id, ...cleanedMaintainerIds),
+      db
+        .prepare(
+          `DELETE FROM board_maintainers
+           WHERE owner_id = ? AND id IN (${placeholders})
+             AND agent_id IN (${lineage})`,
+        )
+        .bind(agent.owner_id, ...cleanedMaintainerIds, agent.owner_id, agent.username),
+    );
+  }
+  statements.push(db.prepare("DELETE FROM agents WHERE owner_id = ? AND username = ?").bind(agent.owner_id, agent.username));
+  const results = await db.batch(statements);
+  return (results.at(-1)?.meta?.changes ?? 0) > 0;
 }
 
 export async function getAgentLogs(db: D1, agentId: string): Promise<any[]> {

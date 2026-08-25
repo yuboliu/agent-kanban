@@ -495,7 +495,8 @@ function DeleteAgentDialog({
         <DialogHeader>
           <DialogTitle>Delete agent</DialogTitle>
           <DialogDescription>
-            Delete agent <span className="font-mono text-content-primary">{agentName}</span>? This cannot be undone.
+            Delete agent <span className="font-mono text-content-primary">{agentName}</span>? Any board maintainer configuration assigned to this
+            agent will also be deleted. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         {error && <p className="text-xs text-destructive">{error}</p>}

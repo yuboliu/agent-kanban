@@ -18,6 +18,7 @@ import { getVersion } from "../version.js";
 import { startSkillCacheRefresh } from "../workspace/skills.js";
 import { auditOrphanedTasks, cleanupLeaderSessions, cleanupStaleSessions, cleanupUntrackedWorktrees } from "./cleanup.js";
 import { DaemonLoop } from "./loop.js";
+import { LocalMaintainerScheduler } from "./maintainerScheduler.js";
 import { PrMonitor } from "./prMonitor.js";
 import { RateLimiter } from "./rateLimiter.js";
 import { RuntimeCircuitBreaker } from "./runtimeCircuitBreaker.js";
@@ -113,6 +114,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   const stopSkillCacheRefresh = startSkillCacheRefresh();
 
   const prMonitor = new PrMonitor(client);
+  const maintainerScheduler = new LocalMaintainerScheduler(client, logger);
 
   const { apiUrl, apiKey } = getCredentials();
   const tunnel = new TunnelClient(apiUrl, apiKey);
@@ -183,6 +185,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     rateLimiter.stop();
     circuitBreaker.stop();
     prMonitor.stop();
+    maintainerScheduler.stop();
     usageCollector.stop();
     stopSkillCacheRefresh();
     clearInterval(heartbeatInterval);
@@ -201,6 +204,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   );
 
   prMonitor.start();
+  maintainerScheduler.start();
   loop.start();
   await opts.onReady?.(machineId);
 }

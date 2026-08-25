@@ -277,6 +277,7 @@ function makeFakeMachineClient(
     listRepositories: vi.fn().mockResolvedValue([]),
     createSession: vi.fn().mockResolvedValue({ delegation_proof: "fake" }),
     getAgentGpgKey: vi.fn().mockResolvedValue({ armored_private_key: "", gpg_subkey_id: null }),
+    getAgentRuntimeConfig: vi.fn().mockResolvedValue({ env: {} }),
     // Track calls for assertions
     _releaseTaskCalls: releaseTaskCalls,
     _closeSessionCalls: closeSessionCalls,

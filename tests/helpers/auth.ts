@@ -13,7 +13,7 @@ const d1Dir = join(process.cwd(), "apps/web/.wrangler/state/v3/d1/miniflare-D1Da
  *   0 - DemoBoard (skip to board creation)
  *   1 - Create Board (board name input + "Create Board" button)
  */
-export async function signUpAndGetBoard(page: Page, email: string, name = "Test User"): Promise<void> {
+export async function signUpAndGetBoard(page: Page, email: string, name = "Test User", boardName = "My Board"): Promise<void> {
   await page.goto("/auth");
   const origin = new URL(page.url()).origin;
   const res = await fetch(`${origin}/api/auth/sign-up/email`, {
@@ -60,6 +60,7 @@ export async function signUpAndGetBoard(page: Page, email: string, name = "Test 
   await expect(page).toHaveURL(/\/boards\/new/);
 
   // Step 1: create the board and navigate to it.
+  if (boardName !== "My Board") await page.getByRole("textbox").fill(boardName);
   await page.getByRole("button", { name: "Create Board" }).click();
 
   await expect.poll(() => firstBoardId(page)).not.toBeNull();

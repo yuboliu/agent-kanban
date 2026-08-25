@@ -14,6 +14,14 @@ vi.mock("../apps/web/src/components/ChatPanel", () => ({
   AmaSessionChat: ({ sessionId }: { sessionId: string }) => React.createElement("div", { "data-testid": "maintainer-session-chat" }, sessionId),
 }));
 
+const maintainerDialog = vi.fn();
+vi.mock("../apps/web/src/components/BoardMaintainerDialog", () => ({
+  BoardMaintainerDialog: (props: { open: boolean; maintainer: { scheduler_type?: string } }) => {
+    maintainerDialog(props);
+    return props.open ? React.createElement("div", { role: "dialog" }, "Choose triggers: local ak start or AMA managed triggers") : null;
+  },
+}));
+
 const useBoard = vi.fn();
 const useBoardMaintainer = vi.fn();
 const useBoardMaintainerRuns = vi.fn();
@@ -60,6 +68,9 @@ describe("MaintainerDetailPage", () => {
         last_run_at: "2026-06-08T12:10:00.000Z",
         last_session_id: "session_1",
         last_error_message: null,
+        heartbeat_enabled: true,
+        review_enabled: true,
+        scheduler_type: "local",
       },
     });
     useBoardMaintainerRuns.mockReturnValue({
@@ -212,5 +223,17 @@ describe("MaintainerDetailPage", () => {
     fireEvent.click(within(activityRow!).getByRole("button", { name: /session_1/ }));
 
     expect(screen.getByTestId("maintainer-session-chat")).toHaveTextContent("session_1");
+  });
+
+  it("shows the scheduler mode and opens trigger editing for the current maintainer", () => {
+    renderMaintainerDetail();
+
+    expect(screen.getByText("local ak start")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit triggers" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("local ak start or AMA managed triggers");
+    expect(maintainerDialog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ open: true, maintainer: expect.objectContaining({ scheduler_type: "local" }) }),
+    );
   });
 });

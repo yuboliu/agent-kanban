@@ -571,6 +571,7 @@ describe("formatMaintainer", () => {
       agent_id: "agent-1",
       status: "active",
       heartbeat_enabled: false,
+      review_enabled: true,
       interval_seconds: 3600,
     });
 
@@ -578,6 +579,7 @@ describe("formatMaintainer", () => {
     expect(result).toContain("Board:");
     expect(result).toContain("Heartbeat:");
     expect(result).toContain("disabled");
+    expect(result).toContain("Review events: enabled");
     expect(result).not.toContain("Repository:");
   });
 });
@@ -590,6 +592,7 @@ describe("formatMaintainerList", () => {
         agent_id: "agent-1",
         status: "active",
         heartbeat_enabled: true,
+        review_enabled: false,
         interval_seconds: 3600,
       },
     ]);
@@ -597,6 +600,7 @@ describe("formatMaintainerList", () => {
     expect(result).toContain("maintainer-1");
     expect(result).toContain("agent=agent-1");
     expect(result).toContain("heartbeat=enabled");
+    expect(result).toContain("reviews=disabled");
     expect(result).not.toContain("repo=");
   });
 });

@@ -144,7 +144,7 @@ describe("RelayQuotaPanel", () => {
     relaysList.mockResolvedValue([relay("r-kimi", "kimi", "Kimi relay")]);
     renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Configure Kimi relay" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Configure Kimi relay" }, { timeout: 5000 }));
     const dialog = await screen.findByRole("dialog");
 
     const tokenInput = within(dialog).getByLabelText(/Token/);

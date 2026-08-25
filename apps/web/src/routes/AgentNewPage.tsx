@@ -5,10 +5,13 @@ import {
   fetchTemplate,
   fetchTemplateIndex,
   findInvalidSkillRef,
+  MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS,
+  MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS,
   RUNTIME_LABELS,
   type TemplateIndex,
 } from "@agent-kanban/shared";
-import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AgentIdenticon } from "../components/AgentIdenticon";
 import { Header } from "../components/Header";
@@ -16,9 +19,12 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { useAgents, useCreateAgent } from "../hooks/useAgents";
 import { agentColor } from "../lib/agentIdentity";
+import { effortLabel, hostOf, includeCurrentModel, reasoningEfforts, relayModels } from "../lib/agentRuntimeOptions";
+import { api } from "../lib/api";
 
 type Step = "choose" | "recruit" | "form";
 
@@ -49,8 +55,17 @@ export function AgentNewPage() {
   const [handoffTo, setHandoffTo] = useState<string[]>([]);
   const [runtime, setRuntime] = useState<AgentRuntime>("claude");
   const [model, setModel] = useState("");
+  const [relayId, setRelayId] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
   const [skills, setSkills] = useState<string[]>([]);
+  const [createMaintainer, setCreateMaintainer] = useState(false);
+  const [maintainerBoardId, setMaintainerBoardId] = useState("");
+  const [reviewEnabled, setReviewEnabled] = useState(true);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
+  const [heartbeatInterval, setHeartbeatInterval] = useState(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const existingRoles = [...new Set(agents.map((a) => a.role).filter(Boolean))];
 
@@ -64,7 +79,14 @@ export function AgentNewPage() {
     setHandoffTo(t.handoff_to || []);
     setRuntime(t.runtime || "claude");
     setModel(t.model || "");
+    setRelayId("");
+    setReasoningEffort("");
     setSkills(t.skills || []);
+    setCreateMaintainer(false);
+    setMaintainerBoardId("");
+    setReviewEnabled(true);
+    setHeartbeatEnabled(true);
+    setHeartbeatInterval(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
     setStep("form");
   }
 
@@ -78,11 +100,19 @@ export function AgentNewPage() {
     setHandoffTo([]);
     setRuntime("claude");
     setModel("");
+    setRelayId("");
+    setReasoningEffort("");
     setSkills([]);
+    setCreateMaintainer(false);
+    setMaintainerBoardId("");
+    setReviewEnabled(true);
+    setHeartbeatEnabled(true);
+    setHeartbeatInterval(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
     setStep("form");
   }
 
   async function handleCreate() {
+    if (submittingRef.current) return;
     if (!username.trim()) {
       setError("Username is required (lowercase letters, numbers, hyphens).");
       return;
@@ -93,21 +123,60 @@ export function AgentNewPage() {
       setError(`Invalid skill "${invalidSkill}". Use source/repo[#ref]@skill-name format.`);
       return;
     }
+    if (createMaintainer && !maintainerBoardId) {
+      setError("Select the board this maintainer will manage.");
+      return;
+    }
+    if (createMaintainer && !reviewEnabled && !heartbeatEnabled) {
+      setError("Enable at least one maintainer trigger mode.");
+      return;
+    }
+    const intervalSeconds = Number.parseInt(heartbeatInterval, 10);
+    if (createMaintainer && heartbeatEnabled && (!Number.isInteger(intervalSeconds) || intervalSeconds < MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS)) {
+      setError(`Heartbeat interval must be at least ${MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS} seconds.`);
+      return;
+    }
+    const savedInterval =
+      Number.isInteger(intervalSeconds) && intervalSeconds >= MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS
+        ? intervalSeconds
+        : MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
-      await createAgent.mutateAsync({
+      const maintainerSkills = createMaintainer ? [...new Set([...skills, "ak@ak-maintainer"])] : skills;
+      const agent = await createAgent.mutateAsync({
         name: name.trim() || undefined,
         username: username.trim(),
         bio: bio.trim() || undefined,
         soul: soul.trim() || undefined,
-        role: role.trim() || undefined,
+        role: createMaintainer ? "board-maintainer" : role.trim() || undefined,
         handoff_to: handoffTo.length ? handoffTo : undefined,
         runtime,
         model: model.trim() || undefined,
-        skills: skills.length ? skills : undefined,
+        relay_id: relayId || null,
+        reasoning_effort: reasoningEffort || null,
+        skills: maintainerSkills.length ? maintainerSkills : undefined,
       });
+      if (createMaintainer) {
+        try {
+          await api.boards.createMaintainer(maintainerBoardId, {
+            agent_id: agent.id,
+            interval_seconds: savedInterval,
+            heartbeat_enabled: heartbeatEnabled,
+            review_enabled: reviewEnabled,
+            scheduler_type: "local",
+          });
+        } catch (maintainerError: any) {
+          setError(`Agent saved, but maintainer setup failed: ${maintainerError.message}`);
+          return;
+        }
+      }
       navigate("/agents");
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -137,9 +206,23 @@ export function AgentNewPage() {
             setRuntime={setRuntime}
             model={model}
             setModel={setModel}
+            relayId={relayId}
+            setRelayId={setRelayId}
+            reasoningEffort={reasoningEffort}
+            setReasoningEffort={setReasoningEffort}
             skills={skills}
             setSkills={setSkills}
-            creating={createAgent.isPending}
+            createMaintainer={createMaintainer}
+            setCreateMaintainer={setCreateMaintainer}
+            maintainerBoardId={maintainerBoardId}
+            setMaintainerBoardId={setMaintainerBoardId}
+            reviewEnabled={reviewEnabled}
+            setReviewEnabled={setReviewEnabled}
+            heartbeatEnabled={heartbeatEnabled}
+            setHeartbeatEnabled={setHeartbeatEnabled}
+            heartbeatInterval={heartbeatInterval}
+            setHeartbeatInterval={setHeartbeatInterval}
+            creating={submitting}
             error={error}
             onBack={() => setStep(selectedTemplate ? "recruit" : "choose")}
             onCreate={handleCreate}
@@ -332,8 +415,22 @@ interface FormStepProps {
   setRuntime: (v: AgentRuntime) => void;
   model: string;
   setModel: (v: string) => void;
+  relayId: string;
+  setRelayId: (v: string) => void;
+  reasoningEffort: string;
+  setReasoningEffort: (v: string) => void;
   skills: string[];
   setSkills: (v: string[]) => void;
+  createMaintainer: boolean;
+  setCreateMaintainer: (v: boolean) => void;
+  maintainerBoardId: string;
+  setMaintainerBoardId: (v: string) => void;
+  reviewEnabled: boolean;
+  setReviewEnabled: (v: boolean) => void;
+  heartbeatEnabled: boolean;
+  setHeartbeatEnabled: (v: boolean) => void;
+  heartbeatInterval: string;
+  setHeartbeatInterval: (v: string) => void;
   creating: boolean;
   error: string | null;
   onBack: () => void;
@@ -360,8 +457,22 @@ function FormStep(props: FormStepProps) {
     setRuntime,
     model,
     setModel,
+    relayId,
+    setRelayId,
+    reasoningEffort,
+    setReasoningEffort,
     skills,
     setSkills,
+    createMaintainer,
+    setCreateMaintainer,
+    maintainerBoardId,
+    setMaintainerBoardId,
+    reviewEnabled,
+    setReviewEnabled,
+    heartbeatEnabled,
+    setHeartbeatEnabled,
+    heartbeatInterval,
+    setHeartbeatInterval,
     creating,
     error,
     onBack,
@@ -370,6 +481,37 @@ function FormStep(props: FormStepProps) {
 
   const previewKey = name.trim() || "preview";
   const previewColor = agentColor(previewKey);
+  const { data: relays = [] } = useQuery({ queryKey: ["relays"], queryFn: () => api.relays.list() });
+  const { data: boards = [] } = useQuery({ queryKey: ["boards"], queryFn: () => api.boards.list(), enabled: createMaintainer });
+  const {
+    data: runtimeModels = [],
+    isLoading: runtimeModelsLoading,
+    isError: runtimeModelsError,
+  } = useQuery({
+    queryKey: ["models", runtime],
+    queryFn: () => api.models.list(runtime),
+    enabled: !relayId,
+    staleTime: 30_000,
+  });
+  const selectedRelay = relayId ? relays.find((relay) => relay.id === relayId) : undefined;
+  const relayModelOptions = useMemo(() => relayModels(selectedRelay), [selectedRelay]);
+  const reportedModelOptions = useMemo(
+    () => (selectedRelay ? relayModelOptions.map((id) => ({ id })) : runtimeModels),
+    [selectedRelay, relayModelOptions, runtimeModels],
+  );
+  const modelOptions = useMemo(() => includeCurrentModel(reportedModelOptions, model), [reportedModelOptions, model]);
+  const reasoningOptions = useMemo(
+    () => reasoningEfforts(runtime, selectedRelay, model, reportedModelOptions),
+    [runtime, selectedRelay, model, reportedModelOptions],
+  );
+
+  useEffect(() => {
+    if (!model && runtimeModels.length > 0 && !selectedRelay) setModel(runtimeModels[0].id);
+  }, [model, runtimeModels, selectedRelay, setModel]);
+
+  useEffect(() => {
+    if (reasoningEffort && !reasoningOptions.includes(reasoningEffort)) setReasoningEffort("");
+  }, [reasoningEffort, reasoningOptions, setReasoningEffort]);
 
   return (
     <div>
@@ -453,7 +595,11 @@ function FormStep(props: FormStepProps) {
                 <Select
                   value={runtime}
                   onValueChange={(v) => {
-                    if (v) setRuntime(v as AgentRuntime);
+                    if (!v) return;
+                    setRuntime(v as AgentRuntime);
+                    setRelayId("");
+                    setModel("");
+                    setReasoningEffort("");
                   }}
                 >
                   <SelectTrigger>
@@ -470,9 +616,98 @@ function FormStep(props: FormStepProps) {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="agent-model">Model</Label>
-                <Input id="agent-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. claude-sonnet-4-6" />
+                {modelOptions.length > 0 || runtimeModelsLoading ? (
+                  <Select value={model} disabled={runtimeModelsLoading && modelOptions.length === 0} onValueChange={(v) => v && setModel(v)}>
+                    <SelectTrigger id="agent-model" className="w-full">
+                      <SelectValue>
+                        {(v: string) =>
+                          runtimeModelsLoading && !v
+                            ? "Reading available models…"
+                            : modelOptions.find((option) => option.id === v)?.name || v || "Select a model…"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          <span>{option.name || option.id}</span>
+                          {option.name && option.name !== option.id ? (
+                            <span className="ml-2 font-mono text-[10px] text-content-tertiary">{option.id}</span>
+                          ) : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <>
+                    <Input id="agent-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. claude-sonnet-4-6" />
+                    {runtimeModelsError ? (
+                      <p className="text-[11px] text-content-tertiary">Model catalog unavailable; enter a model ID manually.</p>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="agent-relay">Relay</Label>
+                <Select
+                  value={relayId || "__default__"}
+                  disabled={runtime !== "claude"}
+                  onValueChange={(v) => {
+                    if (v === undefined || v === null) return;
+                    const nextId = v === "__default__" ? "" : v;
+                    setRelayId(nextId);
+                    const nextRelay = relays.find((relay) => relay.id === nextId);
+                    setModel(nextRelay?.model ?? "");
+                    setReasoningEffort("");
+                  }}
+                >
+                  <SelectTrigger id="agent-relay" className="w-full">
+                    <SelectValue>
+                      {(v: string) =>
+                        v === "__default__" ? "Default provider" : relays.find((relay) => relay.id === v)?.name || `Missing relay (${v})`
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__default__">Default provider</SelectItem>
+                    {relays.map((relay) => (
+                      <SelectItem key={relay.id} value={relay.id}>
+                        {relay.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {reasoningOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="agent-reasoning">Thinking effort</Label>
+                  <Select value={reasoningEffort || "__default__"} onValueChange={(v) => setReasoningEffort(v === "__default__" ? "" : (v ?? ""))}>
+                    <SelectTrigger id="agent-reasoning" className="w-full">
+                      <SelectValue>{(v: string) => (v === "__default__" ? "Provider default" : effortLabel(v))}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">Provider default</SelectItem>
+                      {reasoningOptions.map((effort) => (
+                        <SelectItem key={effort} value={effort}>
+                          {effortLabel(effort)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <p className="self-end pb-2 text-xs text-content-tertiary">
+                  {runtime === "claude" ? "Choose a configured relay to use relay models." : "Thinking options follow the selected model catalog."}
+                </p>
+              )}
+            </div>
+            {selectedRelay ? (
+              <p className="font-mono text-[11px] text-content-tertiary">
+                {selectedRelay.kind} · {hostOf(selectedRelay.base_url)}
+              </p>
+            ) : null}
           </fieldset>
 
           {/* Workflow */}
@@ -481,10 +716,79 @@ function FormStep(props: FormStepProps) {
             <div className="space-y-1.5">
               <Label>Handoff to</Label>
               <RoleMultiSelect selected={handoffTo} onChange={setHandoffTo} options={existingRoles} />
+              <p className="text-xs text-content-tertiary">
+                Optional roles for new, independent follow-up tasks discovered after this agent finishes its own work. This does not select reviewers
+                or task-local subagents.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Skills</Label>
               <TagInput tags={skills} onChange={setSkills} placeholder="owner/repo[#ref]@skill-name or ak@skill-name" />
+            </div>
+
+            <div className="rounded-lg border border-border bg-surface-secondary p-4 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="create-board-maintainer">Create as local board maintainer</Label>
+                  <p className="mt-0.5 text-xs text-content-tertiary">Adds the ak-maintainer skill and schedules this agent through ak start.</p>
+                </div>
+                <Switch id="create-board-maintainer" checked={createMaintainer} onCheckedChange={setCreateMaintainer} />
+              </div>
+
+              {createMaintainer ? (
+                <div className="space-y-4 border-t border-border pt-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="maintainer-board">Board</Label>
+                    <Select value={maintainerBoardId} onValueChange={(v) => v && setMaintainerBoardId(v)}>
+                      <SelectTrigger id="maintainer-board" className="w-full">
+                        <SelectValue placeholder="Select a board">
+                          {(v: string) => boards.find((board) => board.id === v)?.name || v || "Select a board"}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {boards.map((board) => (
+                          <SelectItem key={board.id} value={board.id}>
+                            {board.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-primary px-3 py-2">
+                      <div>
+                        <Label htmlFor="new-maintainer-reviews">Review events</Label>
+                        <p className="text-[11px] text-content-tertiary">Review In Review tasks.</p>
+                      </div>
+                      <Switch id="new-maintainer-reviews" checked={reviewEnabled} onCheckedChange={setReviewEnabled} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-primary px-3 py-2">
+                      <div>
+                        <Label htmlFor="new-maintainer-heartbeat">Heartbeat</Label>
+                        <p className="text-[11px] text-content-tertiary">Periodic board health run.</p>
+                      </div>
+                      <Switch id="new-maintainer-heartbeat" checked={heartbeatEnabled} onCheckedChange={setHeartbeatEnabled} />
+                    </div>
+                  </div>
+
+                  {heartbeatEnabled ? (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="new-maintainer-interval">Heartbeat interval seconds</Label>
+                      <Input
+                        id="new-maintainer-interval"
+                        value={heartbeatInterval}
+                        onChange={(event) => setHeartbeatInterval(event.target.value)}
+                        inputMode="numeric"
+                      />
+                      <p className="text-[11px] text-content-tertiary">
+                        Minimum {MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS}. In a local deployment, the running ak start process discovers this
+                        schedule automatically.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </fieldset>
 
