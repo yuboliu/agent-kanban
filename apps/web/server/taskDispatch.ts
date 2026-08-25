@@ -1,4 +1,4 @@
-import { generateKeypair, type Task } from "@agent-kanban/shared";
+import { generateKeypair, isLocalSkillRef, type Task } from "@agent-kanban/shared";
 import { HTTPException } from "hono/http-exception";
 import { getAgent, getAgentAmaId, setAgentAmaId } from "./agentRepo";
 import {
@@ -273,7 +273,8 @@ interface AkAgentProfile {
   handoff_to?: string[] | null;
 }
 
-async function buildAmaAgentInput(
+// Exported for tests: the ak@ skill-ref filtering is part of the AMA contract.
+export async function buildAmaAgentInput(
   db: D1,
   ownerId: string,
   akAgent: AkAgentProfile,
@@ -283,6 +284,12 @@ async function buildAmaAgentInput(
 ) {
   const runtimeProfile = resolveAmaProviderModelProfile({ runtime, preferredModel: akAgent.model });
   const subagents = await Promise.all((akAgent.subagents ?? []).map((id) => getSubagent(db, id, ownerId)));
+  // `ak@<name>` refs are AK-local skills installable only by the local daemon
+  // over the AK API; AMA cannot resolve them, so they are dropped here.
+  const amaSkills = (akAgent.skills ?? []).filter((skill) => !isLocalSkillRef(skill));
+  if (amaSkills.length !== (akAgent.skills ?? []).length) {
+    logger.warn(`dropped ak@ local skill refs from AMA agent input for ${akAgent.username}: AMA cannot resolve AK-local skills`);
+  }
   return {
     projectId,
     name: akAgent.name || akAgent.username,
@@ -291,7 +298,7 @@ async function buildAmaAgentInput(
     role: akAgent.role,
     provider: runtimeProfile.provider,
     model: runtimeProfile.model,
-    skills: akAgent.skills ?? [],
+    skills: amaSkills,
     subagents: subagents.flatMap((subagent) => (subagent ? [amaSubagentProfile(subagent)] : [])),
     // The agent's skills go to AMA's `skills` field above (validated as
     // <source>@<skill>). `capabilityTags` is AMA's SEPARATE handoff-routing slug

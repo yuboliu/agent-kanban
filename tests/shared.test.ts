@@ -6,6 +6,7 @@ import {
   deriveUsername,
   findInvalidSkillRef,
   generateWorktreeName,
+  isLocalSkillRef,
   isValidSkillRef,
   isValidTimezone,
   isValidUsername,
@@ -94,6 +95,13 @@ describe("isValidSkillRef", () => {
     expect(isValidSkillRef("saltbo/agent-kanban#feature/maintainer@ak-maintainer")).toBe(true);
   });
 
+  it("accepts AK-local ak@skill-name refs", () => {
+    expect(isValidSkillRef("ak@ak-verify")).toBe(true);
+    expect(isValidSkillRef("ak@my-skill")).toBe(true);
+    expect(isLocalSkillRef("ak@ak-verify")).toBe(true);
+    expect(isLocalSkillRef("owner/repo@skill")).toBe(false);
+  });
+
   it("rejects short names and malformed refs", () => {
     expect(isValidSkillRef("agent-kanban")).toBe(false);
     expect(isValidSkillRef("trailofbits/skills")).toBe(false);
@@ -103,11 +111,15 @@ describe("isValidSkillRef", () => {
     expect(isValidSkillRef("owner/repo@.")).toBe(false);
     expect(isValidSkillRef("owner/repo@..")).toBe(false);
     expect(isValidSkillRef("owner/repo@../escape")).toBe(false);
+    expect(isValidSkillRef("ak@")).toBe(false);
+    expect(isValidSkillRef("ak@bad skill")).toBe(false);
+    expect(isValidSkillRef("other@skill")).toBe(false);
   });
 
   it("returns the first invalid skill ref", () => {
     expect(findInvalidSkillRef(["owner/repo@good", "browse", "other/repo@good"])).toBe("browse");
     expect(findInvalidSkillRef(["owner/repo@good"])).toBeNull();
+    expect(findInvalidSkillRef(["ak@ak-verify", "owner/repo@good"])).toBeNull();
   });
 });
 

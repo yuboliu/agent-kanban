@@ -232,9 +232,17 @@ export function deriveUsername(name: string): string {
   return derived || "agent";
 }
 
-const SKILL_REF_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?@[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$/;
+const SKILL_NAME_PART = "[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?";
+const SKILL_REF_RE = new RegExp(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?@${SKILL_NAME_PART}$`);
+// Local refs name a skill stored in AK itself (Skills page), installed by the
+// daemon over the AK API instead of `npx skills add`.
+const LOCAL_SKILL_REF_RE = new RegExp(`^ak@${SKILL_NAME_PART}$`);
 export function isValidSkillRef(value: string): boolean {
-  return SKILL_REF_RE.test(value);
+  return SKILL_REF_RE.test(value) || LOCAL_SKILL_REF_RE.test(value);
+}
+
+export function isLocalSkillRef(value: string): boolean {
+  return LOCAL_SKILL_REF_RE.test(value);
 }
 
 export function findInvalidSkillRef(skills: string[] | null | undefined): string | null {
@@ -553,4 +561,22 @@ export interface CreateBoardInput {
 export interface CreateRepositoryInput {
   name: string;
   url: string;
+}
+
+// ─── Skills (owner-managed, single-file v1) ───
+
+export interface Skill {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSkillInput {
+  name: string;
+  description: string;
+  body: string;
 }

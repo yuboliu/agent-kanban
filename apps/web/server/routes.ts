@@ -126,6 +126,7 @@ import {
 } from "./boardRepo";
 import { listBoardRepositories } from "./boardRepositoryRepo";
 import { createBoardSSEResponse, createPublicBoardSSEResponse } from "./boardSSE";
+import { listBuiltinSkills } from "./builtinSkills";
 import { cliVersionMiddleware } from "./cliVersion";
 import { type D1, newLongId } from "./db";
 import { isGithubAppConfigured, listInstallationRepositories, mintGithubInstallationToken, recordInstallationFromSetup } from "./githubApp";
@@ -173,6 +174,7 @@ import { createRepository, deleteRepository, getRepository, listRepositories, no
 import { metadataWithRuntimeSource, taskRuntimeSource } from "./runtimeBinding";
 import { dispatchAssignedTask, releaseAssignedTaskRuntime, resolveAssignableWorkerRuntimeSource } from "./runtimeCoordinator";
 import { amaRunnerHeartbeatFresh, listAvailableRuntimeSources } from "./runtimeRouter";
+import { createSkill, deleteSkill, getSkill, getSkillByName, listSkills, updateSkill } from "./skillRepo";
 import { createSSEResponse } from "./sse";
 import { getSystemStats } from "./statsRepo";
 import { createSubagent, deleteSubagent, getSubagent, listSubagents, updateSubagent } from "./subagentRepo";
@@ -2265,10 +2267,14 @@ api.get("/api/boards", async (c) => {
 });
 
 api.post("/api/boards/:id/maintainers", async (c) => {
-  if (!isAmaTaskDispatchConfigured(c.env)) {
-    throw new HTTPException(500, { message: "Task dispatch runtime is not configured" });
+  // Local (self-hosted) deployments have no AMA: the maintainer is a plain
+  // board row and runs are driven by the local daemon + watch script instead
+  // of AMA triggers. The AMA provisioning path below is unchanged and only
+  // activates when task dispatch is AMA-configured.
+  const amaConfigured = isAmaTaskDispatchConfigured(c.env);
+  if (amaConfigured) {
+    await requireAmaConnected(c.env.DB, c.env, c.get("ownerId"));
   }
-  await requireAmaConnected(c.env.DB, c.env, c.get("ownerId"));
 
   const ownerId = c.get("ownerId");
   const boardId = c.req.param("id");
@@ -2295,6 +2301,30 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   if (existingMaintainers.length > 0) {
     throw new HTTPException(409, { message: "Board already has a maintainer" });
   }
+
+  if (!amaConfigured) {
+    const maintainerAgent = await ensureLocalMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
+    const maintainerId = newLongId();
+    const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
+      id: maintainerId,
+      boardId,
+      agentId: maintainerAgent.id,
+      // ama_schedule_id is NOT NULL with a unique index; the local:<id>
+      // placeholder satisfies both while staying self-describing.
+      amaScheduleId: `local:${maintainerId}`,
+      amaHttpTriggerId: null,
+      amaMemoryStoreId: null,
+      prompt: "",
+      intervalSeconds,
+      // No server-side scheduler exists locally; scripts/local-maintainer-watch.sh drives runs.
+      heartbeatEnabled: false,
+      status: maintainerStatus,
+      amaBoardVaultId: null,
+      apiKeyId: null,
+    });
+    return c.json(await publicBoardMaintainerWithAmaStatus(c.env.DB, c.env, ownerId, maintainer), 201);
+  }
+
   const amaProjectId = await resolveAmaProjectId(c.env.DB, c.env, ownerId);
   const maintainerAgent = await ensureMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
   // The trigger is left unpinned: AMA resolves a runner-capable environment for
@@ -2732,6 +2762,26 @@ async function ensureMaintainerAgentProfile(db: D1, ownerId: string, agentId: st
   if (!updated) throw new HTTPException(404, { message: "Agent not found" });
   return updated;
 }
+
+// Local (non-AMA) maintainer profile: same validation and skill, but NO
+// NoSchedule taint. The taint exists to keep AMA maintainer agents off legacy
+// scheduling; a local maintainer must stay schedulable so the local daemon
+// can dispatch its review tasks.
+async function ensureLocalMaintainerAgentProfile(db: D1, ownerId: string, agentId: string) {
+  const agent = await getAgent(db, agentId, ownerId);
+  if (!agent) throw new HTTPException(404, { message: "Agent not found" });
+  if (agent.kind !== "worker") throw new HTTPException(400, { message: "Board maintainers must use worker agents" });
+  if (!isMaintainerAgentProfile(agent)) {
+    throw new HTTPException(400, { message: "Board maintainers must use a maintainer agent" });
+  }
+  const skills = withMaintainerSkill(agent.skills);
+  if (JSON.stringify(skills) === JSON.stringify(agent.skills ?? [])) {
+    return agent;
+  }
+  const updated = await updateAgent(db, agent.id, { skills });
+  if (!updated) throw new HTTPException(404, { message: "Agent not found" });
+  return updated;
+}
 function boardMaintainerBasePrompt(boardId: string) {
   return [
     `You are the maintainer for AK board ${boardId}.`,
@@ -3144,6 +3194,61 @@ api.delete("/api/repositories/:id", async (c) => {
   if (!repo) throw new HTTPException(404, { message: "Repository not found" });
   if (repo.owner_id !== ownerId) throw new HTTPException(403, { message: "Forbidden" });
   await deleteRepository(c.env.DB, c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// ─── Skills ───
+
+// Owner-managed custom skills. CRUD is user-driven (Skills page); the
+// by-name content endpoint is also readable by machine identity so the local
+// daemon can install `ak@<name>` skills into agent workspaces.
+api.post("/api/skills", async (c) => {
+  const body = await c.req.json<{ name?: string; description?: string; body?: string }>();
+  if (!body.name) throw new HTTPException(400, { message: "name is required" });
+  const skill = await createSkill(c.env.DB, c.get("ownerId"), {
+    name: body.name.trim(),
+    description: body.description ?? "",
+    body: body.body ?? "",
+  });
+  return c.json(skill, 201);
+});
+
+api.get("/api/skills", async (c) => {
+  return c.json(await listSkills(c.env.DB, c.get("ownerId")));
+});
+
+// Built-in skills shipped in this repository's skills/ directory. Read from
+// the filesystem; returns [] when the directory is unavailable (e.g. deployed
+// worker without the repo on disk).
+api.get("/api/skills/builtin", async (c) => {
+  return c.json(await listBuiltinSkills());
+});
+
+api.get("/api/skills/by-name/:name/content", async (c) => {
+  const skill = await getSkillByName(c.env.DB, c.get("ownerId"), c.req.param("name"));
+  if (!skill) throw new HTTPException(404, { message: "Skill not found" });
+  return c.json({ name: skill.name, description: skill.description, body: skill.body });
+});
+
+api.get("/api/skills/:id", async (c) => {
+  const skill = await getSkill(c.env.DB, c.req.param("id"), c.get("ownerId"));
+  if (!skill) throw new HTTPException(404, { message: "Skill not found" });
+  return c.json(skill);
+});
+
+api.patch("/api/skills/:id", async (c) => {
+  const body = await c.req.json<{ description?: string; body?: string }>();
+  const skill = await updateSkill(c.env.DB, c.req.param("id"), c.get("ownerId"), {
+    description: body.description,
+    body: body.body,
+  });
+  if (!skill) throw new HTTPException(404, { message: "Skill not found" });
+  return c.json(skill);
+});
+
+api.delete("/api/skills/:id", async (c) => {
+  const deleted = await deleteSkill(c.env.DB, c.req.param("id"), c.get("ownerId"));
+  if (!deleted) throw new HTTPException(404, { message: "Skill not found" });
   return c.json({ ok: true });
 });
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentInfo } from "../packages/cli/src/agent/systemPrompt.js";
-import { cleanupPromptFile, generateSystemPrompt, writePromptFile } from "../packages/cli/src/agent/systemPrompt.js";
+import { cleanupPromptFile, generateSystemPrompt, isMaintainerAgent, writePromptFile } from "../packages/cli/src/agent/systemPrompt.js";
 
 function makeAgent(overrides: Partial<AgentInfo> = {}): AgentInfo {
   return {
@@ -264,5 +264,40 @@ describe("cleanupPromptFile", () => {
 
   it("does not throw when the file does not exist", () => {
     expect(() => cleanupPromptFile("nonexistent-session-xyz")).not.toThrow();
+  });
+});
+
+// ─── Maintainer vs worker completion rules ─────────────────────────────────
+
+describe("generateSystemPrompt — maintainer agents", () => {
+  it("detects maintainers by role or ak-maintainer skill", () => {
+    expect(isMaintainerAgent(makeAgent({ role: "board-maintainer" }))).toBe(true);
+    expect(isMaintainerAgent(makeAgent({ role: "developer", skills: ["saltbo/agent-kanban@ak-maintainer"] }))).toBe(true);
+    expect(isMaintainerAgent(makeAgent({ role: "developer", skills: ["ak@ak-maintainer"] }))).toBe(true);
+    expect(isMaintainerAgent(makeAgent({ role: "developer", skills: ["ak@ak-verify"] }))).toBe(false);
+    expect(isMaintainerAgent(makeAgent({ role: "developer" }))).toBe(false);
+  });
+
+  it("allows maintainers to complete and reject other agents' tasks", () => {
+    const prompt = generateSystemPrompt(makeAgent({ role: "board-maintainer" }), "dev");
+    expect(prompt).toContain("maintainer");
+    expect(prompt).toContain("task complete");
+    expect(prompt).not.toContain("only humans complete tasks");
+  });
+
+  it("tells maintainers to self-close their own review tasks", () => {
+    const prompt = generateSystemPrompt(makeAgent({ skills: ["saltbo/agent-kanban@ak-maintainer"] }), "dev");
+    expect(prompt).toContain("maintainer-review");
+    expect(prompt).toContain("ak task complete");
+  });
+
+  it("keeps the worker completion rule for regular workers", () => {
+    const prompt = generateSystemPrompt(makeAgent(), "dev");
+    expect(prompt).toContain("Never call `task complete` — only humans complete tasks");
+  });
+
+  it("applies maintainer rules on ops boards too", () => {
+    const prompt = generateSystemPrompt(makeAgent({ role: "board-maintainer" }), "ops");
+    expect(prompt).not.toContain("only humans complete tasks");
   });
 });

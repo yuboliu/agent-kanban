@@ -134,6 +134,14 @@ export abstract class ApiClient {
   getAgent(agentId: string) {
     return this.request("GET", `/api/agents/${agentId}`);
   }
+  async getSkillContent(name: string): Promise<{ name: string; description: string; body: string } | null> {
+    try {
+      return await this.request("GET", `/api/skills/by-name/${encodeURIComponent(name)}/content`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  }
   getAgentGpgKey(agentId: string) {
     return this.request<{ armored_private_key: string; gpg_subkey_id: string | null }>("GET", `/api/agents/${agentId}/gpg-key`);
   }

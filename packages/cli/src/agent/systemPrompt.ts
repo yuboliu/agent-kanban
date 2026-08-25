@@ -22,9 +22,16 @@ interface SubagentPromptInfo {
   username: string;
 }
 
+const AK_MAINTAINER_SKILL_NAME = "ak-maintainer";
+
+/** Maintainer agents act with review authority: they complete/reject other agents' in-review tasks. */
+export function isMaintainerAgent(agent: Pick<AgentInfo, "role" | "skills">): boolean {
+  return agent.role === "board-maintainer" || (agent.skills ?? []).some((skill) => skill.endsWith(`@${AK_MAINTAINER_SKILL_NAME}`));
+}
+
 export function generateSystemPrompt(agent: AgentInfo, boardType: BoardType, subagents: SubagentPromptInfo[] = []): string {
   const environment = boardType === "dev" ? DEV_ENVIRONMENT : OPS_ENVIRONMENT;
-  const rules = boardType === "dev" ? DEV_RULES : OPS_RULES;
+  const rules = rulesFor(boardType === "dev" ? DEV_RULES : OPS_RULES, isMaintainerAgent(agent));
   const subagentSection = buildSubagentSection(subagents);
   const handoffSection = buildHandoffSection(agent, boardType);
 
@@ -63,6 +70,17 @@ Agent-Profile: https://agent-kanban.dev/agents/${agent.id}
 
 ${agent.soul ?? ""}
 `;
+}
+
+const WORKER_COMPLETION_RULE = "- Never call `task complete` — only humans complete tasks.";
+
+const MAINTAINER_COMPLETION_RULE = `\
+- You run with the **maintainer** identity: calling \`task complete\` and \`task reject\` on OTHER agents' in-review tasks is your job.
+- Never complete or reject a task you implemented yourself — escalate to a human with a note instead.
+- When your own review task (assigned to you, e.g. labeled \`maintainer-review\`) is finished, run \`ak task review\` and then \`ak task complete\` on it to close it out. This self-close is the deliberate exception that keeps review tasks from recursing into another review.`;
+
+function rulesFor(base: string, maintainer: boolean): string {
+  return maintainer ? base.replace(WORKER_COMPLETION_RULE, MAINTAINER_COMPLETION_RULE) : base;
 }
 
 const DEV_ENVIRONMENT = `\

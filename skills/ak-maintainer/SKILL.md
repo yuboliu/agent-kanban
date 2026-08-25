@@ -114,6 +114,8 @@ For each finding, decide whether to create and assign an AK task, open or update
 
 Every PR review must include acceptance, not only code review.
 
+When the `ak-verify` skill is installed, it is the acceptance standard for the change: the worker's test and regression evidence (ak-verify Steps 1 and 3) is required verification input, and the maintainer's review applies the ak-verify Step 2 PASS/REVISE standard to the submitted diff. A submission without ak-verify evidence (or with failing/unverifiable steps) is rejected with the specific failing step named.
+
 Acceptance has two required dimensions:
 
 - Code coverage acceptance: verify that tests, specs, fixtures, docs, or other project-standard checks cover the behavior, bug, or risk the PR is supposed to address.

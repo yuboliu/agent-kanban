@@ -1,5 +1,6 @@
 import type {
   AgentRuntime,
+  CreateSkillInput,
   CreateSubagentInput,
   GithubAppConfig,
   InstallableRepo,
@@ -10,6 +11,7 @@ import type {
   RuntimeModel,
   RuntimeSettings,
   SchedulingSettings,
+  Skill,
 } from "@agent-kanban/shared";
 import { getAuthToken, refreshAuthToken } from "./auth-client";
 
@@ -184,6 +186,16 @@ export const api = {
     list: () => request<Repository[]>("GET", "/repositories"),
     create: (input: { name: string; url: string }) => request<Repository>("POST", "/repositories", input),
     delete: (id: string) => request<void>("DELETE", `/repositories/${id}`),
+  },
+  skills: {
+    list: () => request<Skill[]>("GET", "/skills"),
+    get: (id: string) => request<Skill>("GET", `/skills/${id}`),
+    create: (input: CreateSkillInput) => request<Skill>("POST", "/skills", input),
+    update: (id: string, body: { description?: string; body?: string }) => request<Skill>("PATCH", `/skills/${id}`, body),
+    delete: (id: string) => request<void>("DELETE", `/skills/${id}`),
+    getContent: (name: string) =>
+      request<{ name: string; description: string; body: string }>("GET", `/skills/by-name/${encodeURIComponent(name)}/content`),
+    listBuiltin: () => request<(CreateSkillInput & { source: string })[]>("GET", "/skills/builtin"),
   },
   githubApp: {
     config: () => request<GithubAppConfig>("GET", "/github-app/config"),

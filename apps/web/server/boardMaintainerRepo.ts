@@ -28,9 +28,11 @@ export interface CreateBoardMaintainerInput {
   boardId: string;
   agentId: string;
   amaScheduleId: string;
-  amaHttpTriggerId: string;
+  // Nullable to match the 0035 schema: local (non-AMA) maintainers have no
+  // AMA triggers or memory store.
+  amaHttpTriggerId: string | null;
   amaHttpTriggerSerialized?: boolean;
-  amaMemoryStoreId: string;
+  amaMemoryStoreId: string | null;
   amaBoardVaultId?: string | null;
   prompt: string;
   intervalSeconds: number;

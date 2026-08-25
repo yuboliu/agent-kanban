@@ -57,6 +57,15 @@ export interface SkillSnapshot {
   objectDir: string;
 }
 
+export interface LocalSkillContent {
+  name: string;
+  description: string;
+  body: string;
+}
+
+/** Fetches an AK-local skill (`ak@<name>`) from the AK API. Returns null on 404. */
+export type LocalSkillFetcher = (name: string) => Promise<LocalSkillContent | null>;
+
 const failedUntil = new Map<string, number>();
 
 function emptyManifest(): CacheManifest {
@@ -272,8 +281,43 @@ function snapshotFor(entry: CacheEntry): SkillSnapshot {
   return { ref: entry.ref, skill: entry.skill, contentHash: entry.contentHash, objectDir: join(OBJECTS_DIR, entry.contentHash) };
 }
 
+/** Rebuild a complete SKILL.md from AK-local skill fields (frontmatter is derived, never stored). */
+export function renderLocalSkillMarkdown(content: LocalSkillContent, fallbackName: string): string {
+  const name = content.name || fallbackName;
+  const description = (content.description ?? "").replace(/\s+/g, " ").trim();
+  const body = (content.body ?? "").trim();
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}\n`;
+}
+
+/**
+ * AK-local skills (`ak@<name>`) are single-file skills stored in D1. Content
+ * is re-fetched on every dispatch so edits propagate immediately; on failure
+ * the last-known-good snapshot is kept.
+ */
+async function installLocalSkillIntoCache(
+  ref: string,
+  skill: string,
+  fetchContent: LocalSkillFetcher,
+  previous?: CacheEntry,
+): Promise<CacheEntry | null> {
+  if (Date.now() < (failedUntil.get(ref) ?? 0)) return previous && objectIsUsable(previous) ? previous : null;
+  const staging = createInstallStaging(skill);
+  try {
+    const content = await fetchContent(skill);
+    if (!content) throw new Error(`AK-local skill "${skill}" not found`);
+    const dir = join(staging, ".agents", "skills", skill);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), renderLocalSkillMarkdown(content, skill), "utf8");
+    return publishStagedSkill(ref, "ak", skill, staging, previous);
+  } catch (err) {
+    return installFailure(ref, previous, err);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /** Resolve requested skills before any worktree is created. */
-export function prepareSkillSnapshots(agentSkills: string[]): SkillSnapshot[] | null {
+export async function prepareSkillSnapshots(agentSkills: string[], fetchLocalSkill?: LocalSkillFetcher): Promise<SkillSnapshot[] | null> {
   try {
     const requested = requestedRefs(agentSkills);
     const manifest = readManifest();
@@ -282,12 +326,29 @@ export function prepareSkillSnapshots(agentSkills: string[]): SkillSnapshot[] | 
     for (const item of requested) {
       let entry: CacheEntry | undefined = manifest.entries[item.ref];
       if (entry && (entry.ref !== item.ref || entry.source !== item.source || entry.skill !== item.skill)) entry = undefined;
-      if (!objectIsUsable(entry)) {
+      const usable = objectIsUsable(entry) ? entry : undefined;
+      if (item.source === "ak") {
+        if (!fetchLocalSkill) {
+          logger.error(`Skill "${item.ref}" is AK-local but no AK API client is available to fetch it`);
+          if (!usable) return null;
+          entry = usable;
+        } else {
+          const installed = await installLocalSkillIntoCache(item.ref, item.skill, fetchLocalSkill, usable);
+          if (!installed) return null;
+          entry = installed;
+          if (installed !== usable) {
+            manifest.entries[item.ref] = installed;
+            changed = true;
+          }
+        }
+      } else if (!usable) {
         const installed = installIntoCache(item.ref, item.source, item.skill, entry);
         if (!installed) return null;
         entry = installed;
         manifest.entries[item.ref] = installed;
         changed = true;
+      } else {
+        entry = usable;
       }
       snapshots.push(snapshotFor(entry));
     }
@@ -338,6 +399,9 @@ async function refreshStaleEntries(signal?: AbortSignal): Promise<void> {
   const manifest = readManifest();
   for (const entry of Object.values(manifest.entries)) {
     if (signal?.aborted) return;
+    // AK-local skills are re-fetched at dispatch time instead — the hourly
+    // refresh has no API client.
+    if (entry.source === "ak") continue;
     if (Date.now() - entry.checkedAt < maxAgeMs) continue;
     const refreshed = await installIntoCacheAsync(entry.ref, entry.source, entry.skill, entry, signal);
     if (!refreshed) continue;
