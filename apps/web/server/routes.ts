@@ -5,6 +5,8 @@ import {
   AMA_ANNOTATION_KEY_IDLE_TIMEOUT_SECONDS,
   AMA_BACKFILL_FAILED_TAINT_KEY,
   type AnyAgentRuntime,
+  availabilityFromUsage,
+  availabilityFromUsageError,
   type CreateAgentInput,
   type CreateSubagentInput,
   detectRelay,
@@ -1605,6 +1607,28 @@ api.get("/api/agents/:id/runtime-config", async (c) => {
   const relay = await getRelayEndpoint(c.env.DB, agent.relay_id, ownerId);
   if (!relay) throw new HTTPException(409, { message: "Agent relay endpoint no longer exists" });
   return c.json({ env: { ...relayRuntimeEnv(relay), ANTHROPIC_AUTH_TOKEN: relay.token } });
+});
+
+// Per-agent relay availability for the local daemon's dispatch preflight.
+// An agent bound to a relay must gate on THAT relay's quota — not the
+// daemon's global Claude config (~/.claude/settings.json) — or dispatch
+// would open whenever the global config's relay differs from the agent's.
+// The relay token never leaves the server: the probe runs here and only the
+// derived RuntimeAvailability is returned.
+api.get("/api/agents/:id/relay-availability", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const agent = await getAgent(c.env.DB, c.req.param("id"), ownerId);
+  if (!agent) throw new HTTPException(404, { message: "Agent not found" });
+  if (!agent.relay_id) return c.json({ availability: null });
+  const relay = await getRelayEndpoint(c.env.DB, agent.relay_id, ownerId);
+  if (!relay) throw new HTTPException(409, { message: "Agent relay endpoint no longer exists" });
+  try {
+    const probe = await probeRelayQuota({ kind: relay.kind, baseUrl: relay.base_url, token: relay.token });
+    return c.json({ availability: availabilityFromUsage(probe.usage) });
+  } catch (err) {
+    return c.json({ availability: availabilityFromUsageError(err, relay.name) });
+  }
 });
 
 api.post("/api/agents", async (c) => {

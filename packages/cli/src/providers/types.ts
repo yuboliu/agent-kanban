@@ -1,16 +1,18 @@
 import {
   type AgentEvent,
   type AgentRuntime,
+  availabilityFromUsage,
+  availabilityFromUsageError,
   type ContentBlock,
-  type MachineRuntimeStatus,
   parseRetryAfterMs,
+  type RuntimeAvailability,
   type RuntimeModel,
   UsageFetchError,
   type UsageInfo,
   type UsageWindow,
 } from "@agent-kanban/shared";
 
-export type { AgentEvent, AgentRuntime, ContentBlock, UsageInfo, UsageWindow };
+export type { AgentEvent, AgentRuntime, ContentBlock, RuntimeAvailability, RuntimeModel, UsageInfo, UsageWindow };
 // UsageFetchError / parseRetryAfterMs are defined once in shared (the web
 // server throws them too); re-exported here so existing CLI import sites and
 // `instanceof` checks keep working against the same class object.
@@ -18,15 +20,10 @@ export type { AgentEvent, AgentRuntime, ContentBlock, UsageInfo, UsageWindow };
 //   API is reachable but returned a non-OK status, or when the request itself
 //   failed. Carries the HTTP status (if any) and parsed `Retry-After` so the
 //   collector can schedule the next attempt precisely.
-export { parseRetryAfterMs, UsageFetchError };
-
-export interface RuntimeAvailability {
-  status: MachineRuntimeStatus;
-  detail?: string;
-  reset_at?: string;
-}
-
-export type { RuntimeModel };
+// RuntimeAvailability and the usage→availability mappers live in shared (the
+// server's relay availability endpoint and the CLI providers share them);
+// re-exported so existing CLI import sites keep working.
+export { availabilityFromUsage, availabilityFromUsageError, parseRetryAfterMs, UsageFetchError };
 
 /** Normalized history entry returned by provider history readers. */
 export interface HistoryEvent {
@@ -90,29 +87,4 @@ export interface AgentProvider {
    * that's a "not applicable" signal, not a failure.
    */
   fetchUsage?(): Promise<UsageInfo | null>;
-}
-
-export function availabilityFromUsage(usage: UsageInfo | null): RuntimeAvailability {
-  const exhausted = usage?.windows.filter((window) => window.utilization >= 100) ?? [];
-  if (exhausted.length === 0) return { status: "ready" };
-
-  const reset_at = exhausted
-    .map((window) => window.resets_at)
-    .filter(Boolean)
-    .sort()[0];
-  return { status: "limited", detail: "runtime usage limit reached", reset_at };
-}
-
-export function availabilityFromUsageError(err: unknown, runtimeLabel: string): RuntimeAvailability {
-  if (!(err instanceof UsageFetchError)) {
-    return { status: "unhealthy", detail: `${runtimeLabel} usage probe failed: ${(err as Error).message}` };
-  }
-  if (err.status === 401 || err.status === 403) {
-    return { status: "unauthorized", detail: `${runtimeLabel} authentication failed` };
-  }
-  if (err.status === 429) {
-    const reset_at = err.retryAfterMs === undefined ? undefined : new Date(Date.now() + err.retryAfterMs).toISOString();
-    return { status: "limited", detail: `${runtimeLabel} usage limit reached`, reset_at };
-  }
-  return { status: "unhealthy", detail: err.message };
 }

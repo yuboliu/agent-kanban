@@ -17,6 +17,7 @@ import { AgentClient, type ApiClient } from "../client/index.js";
 import { getCredentials } from "../config.js";
 import { createLogger } from "../logger.js";
 import { getAvailableProviders, getProvider, normalizeRuntime } from "../providers/registry.js";
+import type { RuntimeAvailability } from "../providers/types.js";
 import { getSessionManager } from "../session/manager.js";
 import type { SessionFile } from "../session/types.js";
 import { ensureSubagents, type SubagentDefinition } from "../workspace/agents.js";
@@ -129,6 +130,34 @@ export interface DispatchOpts {
 }
 
 /**
+ * Resolve the availability gate for a candidate agent.
+ *
+ * Relay-bound agents must gate on the quota of the relay they actually run on
+ * (`agents.relay_id` → relay_endpoints), not the daemon's global Claude config
+ * (~/.claude/settings.json): when the two differ, the old global probe could
+ * report ready while the agent's own relay is exhausted — dispatching quota-less
+ * work (fail-open). The server probes the agent's relay and returns its
+ * availability; a probe/API failure maps to `unhealthy` so dispatch fails closed.
+ *
+ * Non-relay agents keep the provider's own check (OAuth / global config —
+ * correct, since they run on that same global config).
+ */
+async function resolveAgentAvailability(
+  client: ApiClient,
+  runtime: AgentRuntime,
+  relayId: string | null,
+  agentId: string,
+  ignoreRuntimeLimit: boolean,
+): Promise<RuntimeAvailability | null> {
+  if (ignoreRuntimeLimit) return null;
+  if (relayId) {
+    const resp = await apiCallOptional("getAgentRelayAvailability", () => client.getAgentRelayAvailability(agentId));
+    return resp?.availability ?? { status: "unhealthy", detail: "agent relay availability probe failed" };
+  }
+  return (await getProvider(runtime).checkAvailability?.()) ?? null;
+}
+
+/**
  * Fetch todo tasks, filter, resolve runtime, prepare repo, dispatch one.
  * Returns true if a task was dispatched.
  */
@@ -191,7 +220,10 @@ async function dispatchTasksExclusive(
   if (available.length === 0) return false;
 
   const localRuntimes = new Set(getAvailableProviders().map((provider) => provider.name));
-  const agentCache = new Map<string, { runtime: AgentRuntime | null; available: boolean }>();
+  const agentCache = new Map<
+    string,
+    { runtime: AgentRuntime | null; available: boolean; relayId: string | null; availability?: RuntimeAvailability | null }
+  >();
   let task: any = null;
   let taskRuntime: AgentRuntime | null = null;
   for (const t of available) {
@@ -200,23 +232,26 @@ async function dispatchTasksExclusive(
       const agent = (await apiCallOptional("getAgent", () => client.getAgent(t.assigned_to))) as any;
       if (!agent) {
         logger.warn(`Agent ${t.assigned_to} not found, skipping task ${t.id}`);
-        agentCache.set(t.assigned_to, { runtime: null, available: false });
+        agentCache.set(t.assigned_to, { runtime: null, available: false, relayId: null });
         continue;
       }
       if (!agent.runtime) {
         logger.warn(`Agent ${t.assigned_to} has no runtime, skipping task ${t.id}`);
-        agentCache.set(t.assigned_to, { runtime: null, available: false });
+        agentCache.set(t.assigned_to, { runtime: null, available: false, relayId: null });
         continue;
       }
       const runtime = normalizeRuntime(agent.runtime);
       const schedulable = typeof agent.status === "object" && agent.status ? agent.status.schedulable : false;
-      agentState = { runtime, available: schedulable === true };
+      agentState = { runtime, available: schedulable === true, relayId: agent.relay_id ?? null };
       agentCache.set(t.assigned_to, agentState);
     }
     if (!agentState.runtime || !agentState.available || !localRuntimes.has(agentState.runtime)) continue;
     if (pool.activeCountForRuntime(agentState.runtime) >= opts.maxConcurrent) continue;
     const ignoreRuntimeLimit = isRuntimeLimitIgnored(agentState.runtime);
-    const localAvailability = ignoreRuntimeLimit ? null : await getProvider(agentState.runtime).checkAvailability?.();
+    if (agentState.availability === undefined) {
+      agentState.availability = await resolveAgentAvailability(client, agentState.runtime, agentState.relayId, t.assigned_to, ignoreRuntimeLimit);
+    }
+    const localAvailability = agentState.availability;
     if (localAvailability && localAvailability.status !== "ready") continue;
     if (
       (ignoreRuntimeLimit || !rateLimiter.isRuntimePaused(agentState.runtime)) &&

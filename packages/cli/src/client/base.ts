@@ -1,4 +1,4 @@
-import type { BoardWithTasks, MachineRuntime, UsageInfo } from "@agent-kanban/shared";
+import type { BoardWithTasks, MachineRuntime, RuntimeAvailability, UsageInfo } from "@agent-kanban/shared";
 import { getVersion } from "../version.js";
 
 const API_REQUEST_TIMEOUT_MS = 60_000;
@@ -145,6 +145,9 @@ export abstract class ApiClient {
   }
   getAgentRuntimeConfig(agentId: string, taskId: string) {
     return this.request<{ env: Record<string, string> }>("GET", `/api/agents/${agentId}/runtime-config?task_id=${encodeURIComponent(taskId)}`);
+  }
+  getAgentRelayAvailability(agentId: string) {
+    return this.request<{ availability: RuntimeAvailability | null }>("GET", `/api/agents/${agentId}/relay-availability`);
   }
   getAgentGpgKey(agentId: string) {
     return this.request<{ armored_private_key: string; gpg_subkey_id: string | null }>("GET", `/api/agents/${agentId}/gpg-key`);

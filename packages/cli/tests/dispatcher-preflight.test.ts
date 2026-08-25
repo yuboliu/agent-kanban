@@ -97,7 +97,7 @@ function task() {
   };
 }
 
-function agent() {
+function agent(overrides: Record<string, unknown> = {}) {
   return {
     id: "agent-1",
     name: "Codex Worker",
@@ -108,6 +108,7 @@ function agent() {
     status: { schedulable: true },
     skills: ["owner/repo@skill"],
     subagents: ["sub-1"],
+    ...overrides,
   };
 }
 
@@ -117,6 +118,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     listRepositories: vi.fn(async () => [{ id: "repo-1", url: "https://github.com/owner/repo" }]),
     getAgent: vi.fn(async () => agent()),
     getAgentRuntimeConfig: vi.fn(async () => ({ env: {} })),
+    getAgentRelayAvailability: vi.fn(async () => ({ availability: null })),
     listSubagents: vi.fn(async () => [{ id: "sub-1", name: "Helper", username: "helper", role: "helper", soul: "help", models: {} }]),
     getTask: vi.fn(async () => ({ status: "in_progress" })),
     createSession: vi.fn(async () => ({ ok: true })),
@@ -312,5 +314,68 @@ describe("dispatcher preparation transaction", () => {
 
     expect(barrier).toHaveBeenCalledTimes(phase === "getAgent" ? 2 : 1);
     expect(mocks.createRepoWorkspace).toHaveBeenCalledOnce();
+  });
+});
+
+describe("relay-bound agent availability preflight", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.provider.checkAvailability.mockResolvedValue({ status: "ready" });
+    mocks.prepareRepo.mockReturnValue(true);
+    mocks.prepareSkillSnapshots.mockReturnValue([{ ref: "owner/repo@skill", skill: "skill", contentHash: "hash", objectDir: "/cache/hash" }]);
+    mocks.ensureSubagents.mockResolvedValue(true);
+    mocks.materializeSkillSnapshots.mockReturnValue(true);
+    mocks.writePromptFile.mockReturnValue("/tmp/prompt.md");
+    mocks.createRepoWorkspace.mockReturnValue({
+      cwd: "/worktrees/task",
+      info: { type: "repo", cwd: "/worktrees/task", repoDir: "/repos/project", branchName: "ak/task" },
+      cleanup: mocks.workspaceCleanup,
+    });
+  });
+
+  it("skips dispatch when the agent's relay is limited", async () => {
+    const h = harness({
+      getAgent: vi.fn(async () => agent({ relay_id: "relay-kimi" })),
+      getAgentRelayAvailability: vi.fn(async () => ({ availability: { status: "limited", reset_at: "2026-08-25T16:00:00.000Z" } })),
+    });
+
+    await expect(dispatch(h)).resolves.toBe(false);
+
+    expect(h.client.getAgentRelayAvailability).toHaveBeenCalledWith("agent-1");
+    expect(mocks.provider.checkAvailability).not.toHaveBeenCalled();
+    expect(h.pool.spawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("gates on the agent relay rather than the daemon provider check when ready", async () => {
+    const h = harness({
+      getAgent: vi.fn(async () => agent({ relay_id: "relay-kimi" })),
+      getAgentRelayAvailability: vi.fn(async () => ({ availability: { status: "ready" } })),
+    });
+
+    await expect(dispatch(h)).resolves.toBe(true);
+
+    expect(h.client.getAgentRelayAvailability).toHaveBeenCalledWith("agent-1");
+    expect(mocks.provider.checkAvailability).not.toHaveBeenCalled();
+    expect(h.pool.spawnAgent).toHaveBeenCalledOnce();
+  });
+
+  it("keeps using the provider check for agents without a relay", async () => {
+    const h = harness();
+
+    await expect(dispatch(h)).resolves.toBe(true);
+
+    expect(mocks.provider.checkAvailability).toHaveBeenCalled();
+    expect(h.client.getAgentRelayAvailability).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the relay availability probe is unavailable", async () => {
+    const h = harness({
+      getAgent: vi.fn(async () => agent({ relay_id: "relay-kimi" })),
+      getAgentRelayAvailability: vi.fn(async () => Promise.reject(new Error("server down"))),
+    });
+
+    await expect(dispatch(h)).resolves.toBe(false);
+
+    expect(h.pool.spawnAgent).not.toHaveBeenCalled();
   });
 });

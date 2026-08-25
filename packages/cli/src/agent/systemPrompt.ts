@@ -16,6 +16,7 @@ export interface AgentInfo {
   runtime: AgentRuntime;
   model: string | null;
   reasoning_effort?: string | null;
+  relay_id?: string | null;
 }
 
 interface SubagentPromptInfo {
