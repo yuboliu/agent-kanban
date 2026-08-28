@@ -52,7 +52,7 @@ test-results/
 .agents/
 skills-lock.json
 .secrets/
-/graphify-out/
+graphify-out/
 
-/plans/note.md
 /.codebuddy/*
+/plans/note.txt
