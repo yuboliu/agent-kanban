@@ -51,6 +51,18 @@ import {
 } from "./agentRepo";
 import { closeSession, createAmaAgentSession, createSession, listSessions, reopenSession, updateSessionUsage } from "./agentSessionRepo";
 import { authMiddleware } from "./auth";
+import {
+  createAutomation,
+  deleteAutomation,
+  getAutomation,
+  listAutomationEvents,
+  listAutomations,
+  listAutomationTasks,
+  listEnabledAutomations,
+  reportAutomationEvent,
+  updateAutomation,
+  updateAutomationEvent,
+} from "./automationRepo";
 import { createAuth } from "./betterAuth";
 import {
   type BoardMaintainer,
@@ -2305,6 +2317,94 @@ api.get("/api/admin/machines", async (c) => {
   const machinesWithStatus = await machinesWithRuntimeStatusByOwner(c.env.DB, c.env, machines);
   const metrics = await getMachineMetrics(c.env);
   return c.json(machinesWithStatus.map((m) => ({ ...m, metrics: metrics.get(m.id) ?? null })));
+});
+
+// ─── GitHub automations ───
+
+api.post("/api/boards/:id/automations", async (c) => {
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
+  if (!board) throw new HTTPException(404, { message: "Board not found" });
+  const body = await c.req.json<{ name?: string; repository_id: string; agent_id: string; enabled?: boolean; rules?: string[] }>();
+  const automation = await createAutomation(c.env.DB, ownerId, { ...body, board_id: boardId });
+  return c.json(automation, 201);
+});
+
+api.get("/api/boards/:id/automations", async (c) => {
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
+  if (!board) throw new HTTPException(404, { message: "Board not found" });
+  const automations = await listAutomations(c.env.DB, ownerId, boardId);
+  return c.json(automations);
+});
+
+/** Machine-only: all enabled automations across boards, for the gh poller. */
+api.get("/api/automations/active", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const automations = await listEnabledAutomations(c.env.DB, c.get("ownerId"));
+  return c.json(automations);
+});
+
+api.patch("/api/boards/:id/automations/:automationId", async (c) => {
+  const ownerId = c.get("ownerId");
+  const automation = await getAutomation(c.env.DB, ownerId, c.req.param("automationId"));
+  if (!automation) throw new HTTPException(404, { message: "Automation not found" });
+  const body = await c.req.json<{ name?: string; enabled?: boolean; rules?: string[] }>();
+  const updated = await updateAutomation(c.env.DB, ownerId, automation.id, body);
+  return c.json(updated);
+});
+
+api.delete("/api/boards/:id/automations/:automationId", async (c) => {
+  const ownerId = c.get("ownerId");
+  const deleted = await deleteAutomation(c.env.DB, ownerId, c.req.param("automationId"));
+  if (!deleted) throw new HTTPException(404, { message: "Automation not found" });
+  return c.json({ ok: true });
+});
+
+/** Machine-only: idempotent event ingest; issue.opened creates a bound task. */
+api.post("/api/boards/:id/automations/:automationId/events", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
+  if (!board) throw new HTTPException(404, { message: "Board not found" });
+  const body = await c.req.json<{
+    event_type: "issue.opened" | "pr.created" | "issue.replied" | "issue.closed";
+    subject: string;
+    repository_id?: string;
+    issue?: { title: string; body: string | null; url: string; number: number };
+  }>();
+  const event = await reportAutomationEvent(c.env.DB, ownerId, c.req.param("automationId"), body);
+  return c.json(event, 201);
+});
+
+api.patch("/api/boards/:id/automations/:automationId/events/:eventId", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const body = await c.req.json<{ status?: string; error?: string | null; task_id?: string | null }>();
+  const event = await updateAutomationEvent(c.env.DB, ownerId, c.req.param("eventId"), body as any);
+  if (!event) throw new HTTPException(404, { message: "Automation event not found" });
+  return c.json(event);
+});
+
+api.get("/api/boards/:id/automations/:automationId/events", async (c) => {
+  const ownerId = c.get("ownerId");
+  const automationId = c.req.param("automationId");
+  const automation = await getAutomation(c.env.DB, ownerId, automationId);
+  if (!automation) throw new HTTPException(404, { message: "Automation not found" });
+  const { status, limit } = c.req.query();
+  const events = await listAutomationEvents(c.env.DB, ownerId, automationId, { status, limit });
+  return c.json({ data: events, pagination: { limit } });
+});
+
+/** Machine-only: tasks spawned by an automation (for the gh poller). */
+api.get("/api/automations/:automationId/tasks", async (c) => {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const ownerId = c.get("ownerId");
+  const tasks = await listAutomationTasks(c.env.DB, ownerId, c.req.param("automationId"), { status: c.req.query("status") });
+  return c.json(tasks);
 });
 
 // ─── Repositories ───

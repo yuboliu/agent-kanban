@@ -17,6 +17,7 @@ import { migrateLegacySessions } from "../session/store.js";
 import { getVersion } from "../version.js";
 import { startSkillCacheRefresh } from "../workspace/skills.js";
 import { auditOrphanedTasks, cleanupLeaderSessions, cleanupStaleSessions, cleanupUntrackedWorktrees } from "./cleanup.js";
+import { GithubAutomationPoller } from "./githubAutomationPoller.js";
 import { DaemonLoop } from "./loop.js";
 import { LocalMaintainerScheduler } from "./maintainerScheduler.js";
 import { PrMonitor } from "./prMonitor.js";
@@ -115,6 +116,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
 
   const prMonitor = new PrMonitor(client);
   const maintainerScheduler = new LocalMaintainerScheduler(client, logger);
+  const githubAutomationPoller = new GithubAutomationPoller(client);
 
   const { apiUrl, apiKey } = getCredentials();
   const tunnel = new TunnelClient(apiUrl, apiKey);
@@ -205,6 +207,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
 
   prMonitor.start();
   maintainerScheduler.start();
+  githubAutomationPoller.start();
   loop.start();
   await opts.onReady?.(machineId);
 }

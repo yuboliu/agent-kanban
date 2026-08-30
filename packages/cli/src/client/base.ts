@@ -319,6 +319,41 @@ export abstract class ApiClient {
     return this.request<any>("DELETE", `/api/boards/${boardId}/maintainers/${maintainerId}`);
   }
 
+  // GitHub automations (machine-driven event loop)
+  getActiveAutomations() {
+    return this.request<any[]>("GET", "/api/automations/active");
+  }
+  listAutomationEvents(boardId: string, automationId: string, params?: { status?: string; limit?: number }) {
+    const qs = params
+      ? `?${new URLSearchParams({ ...(params.status ? { status: params.status } : {}), ...(params.limit ? { limit: String(params.limit) } : {}) }).toString()}`
+      : "";
+    return this.request<any>("GET", `/api/boards/${boardId}/automations/${automationId}/events${qs}`);
+  }
+  listAutomationTasks(automationId: string, params?: { status?: string }) {
+    const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
+    return this.request<any[]>("GET", `/api/automations/${automationId}/tasks${qs}`);
+  }
+  reportAutomationEvent(
+    boardId: string,
+    automationId: string,
+    body: {
+      event_type: string;
+      subject: string;
+      repository_id?: string;
+      issue?: { title: string; body: string | null; url: string; number: number };
+    },
+  ) {
+    return this.request<any>("POST", `/api/boards/${boardId}/automations/${automationId}/events`, body);
+  }
+  updateAutomationEvent(
+    boardId: string,
+    automationId: string,
+    eventId: string,
+    body: { status?: string; error?: string | null; task_id?: string | null },
+  ) {
+    return this.request<any>("PATCH", `/api/boards/${boardId}/automations/${automationId}/events/${eventId}`, body);
+  }
+
   // Repositories
   createRepository(input: { name: string; url: string }) {
     return this.request("POST", "/api/repositories", input);

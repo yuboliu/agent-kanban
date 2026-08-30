@@ -85,6 +85,17 @@ const ROUTE_RULES: { method: string; pattern: RegExp; rule: RouteRule }[] = [
   { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "DELETE", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
 
+  // GitHub automations — user configures rules, machine drives the event loop
+  { method: "POST", pattern: /^\/api\/boards\/[^/]+\/automations$/, rule: { allow: ["user"] } },
+  { method: "GET", pattern: /^\/api\/boards\/[^/]+\/automations$/, rule: { allow: ["user"] } },
+  { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/automations\/[^/]+$/, rule: { allow: ["user"] } },
+  { method: "DELETE", pattern: /^\/api\/boards\/[^/]+\/automations\/[^/]+$/, rule: { allow: ["user"] } },
+  { method: "GET", pattern: /^\/api\/boards\/[^/]+\/automations\/[^/]+\/events$/, rule: { allow: ["user", "machine"] } },
+  { method: "POST", pattern: /^\/api\/boards\/[^/]+\/automations\/[^/]+\/events$/, rule: { allow: ["machine"] } },
+  { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/automations\/[^/]+\/events\/[^/]+$/, rule: { allow: ["machine"] } },
+  { method: "GET", pattern: /^\/api\/automations\/active$/, rule: { allow: ["machine"] } },
+  { method: "GET", pattern: /^\/api\/automations\/[^/]+\/tasks$/, rule: { allow: ["machine"] } },
+
   // Repositories — user and leader
   { method: "POST", pattern: /^\/api\/repositories$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "POST", pattern: /^\/api\/repositories\/[^/]+\/github-token$/, rule: { allow: ["user", "agent:worker", "agent:leader"] } },

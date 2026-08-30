@@ -7,6 +7,7 @@ import { AgentNewPage } from "./routes/AgentNewPage";
 import { AgentsPage } from "./routes/AgentsPage";
 import { AuthCallbackPage } from "./routes/AuthCallbackPage";
 import { AuthPage } from "./routes/AuthPage";
+import { AutomationPage } from "./routes/AutomationPage";
 import { AdminDashboardPage } from "./routes/admin/AdminDashboardPage";
 import { AdminLayout } from "./routes/admin/AdminLayout";
 import { AdminMachinesPage } from "./routes/admin/AdminMachinesPage";
@@ -119,6 +120,14 @@ export function App() {
           element={
             <ProtectedRoute>
               <MaintainerDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/boards/:boardId/automations"
+          element={
+            <ProtectedRoute>
+              <AutomationPage />
             </ProtectedRoute>
           }
         />

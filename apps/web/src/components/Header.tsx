@@ -1,4 +1,4 @@
-import { CircleDotDashed, Settings, Tags } from "lucide-react";
+import { Bot, CircleDotDashed, Settings, Tags } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useBoardMaintainers, useBoards } from "../hooks/useBoard";
@@ -117,6 +117,20 @@ export function Header() {
                 <TooltipContent>Board settings</TooltipContent>
               </Tooltip>
               <MaintainerControl boardId={activeBoard.id} />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Link
+                      to={`/boards/${activeBoard.id}/automations`}
+                      className={buttonVariants({ variant: "ghost", size: "icon-sm", className: "relative" })}
+                      aria-label="GitHub automation"
+                    >
+                      <Bot className="size-3.5" />
+                    </Link>
+                  }
+                />
+                <TooltipContent>GitHub automation</TooltipContent>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   render={

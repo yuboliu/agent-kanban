@@ -166,9 +166,24 @@ export const api = {
       }) as Promise<any>,
   },
   repositories: {
-    list: () => request<Repository[]>("GET", "/repositories"),
+    list: (filters?: { board_id?: string }) =>
+      request<Repository[]>("GET", `/repositories${filters?.board_id ? `?board_id=${filters.board_id}` : ""}`),
     create: (input: { name: string; url: string }) => request<Repository>("POST", "/repositories", input),
     delete: (id: string) => request<void>("DELETE", `/repositories/${id}`),
+  },
+  automations: {
+    list: (boardId: string) => request<any[]>("GET", `/boards/${boardId}/automations`),
+    create: (boardId: string, input: { name?: string; repository_id: string; agent_id: string; enabled?: boolean; rules?: string[] }) =>
+      request<any>("POST", `/boards/${boardId}/automations`, input),
+    update: (boardId: string, automationId: string, body: { name?: string; enabled?: boolean; rules?: string[] }) =>
+      request<any>("PATCH", `/boards/${boardId}/automations/${automationId}`, body),
+    delete: (boardId: string, automationId: string) => request<void>("DELETE", `/boards/${boardId}/automations/${automationId}`),
+    events: (boardId: string, automationId: string, params?: { status?: string; limit?: number }) => {
+      const qs = params
+        ? `?${new URLSearchParams({ ...(params.status ? { status: params.status } : {}), ...(params.limit ? { limit: String(params.limit) } : {}) }).toString()}`
+        : "";
+      return request<{ data: any[]; pagination: { limit?: number } }>("GET", `/boards/${boardId}/automations/${automationId}/events${qs}`);
+    },
   },
   skills: {
     list: () => request<Skill[]>("GET", "/skills"),

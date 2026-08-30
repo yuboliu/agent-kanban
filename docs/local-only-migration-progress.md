@@ -125,19 +125,32 @@
   `ak auth git` 改为提示本地 `gh auth login`;worker 用本地 git 凭据推 PR。
 - 相关测试删除/更新;全量 2429 通过。
 
-### 待办:GitHub 自动化界面(用户新需求,参考 ORCA)
+### GitHub 自动化界面(用户需求,参考 ORCA,2026-08-30 已交付)
 
 用户要求:kanban 平台提供**自动化界面**——定期访问 GitHub,查看提交的 PR 和 issue,
 可设置"PR 合并、issues 处理"关联到指定 agent,当有 PR/issues 时自动执行其中内容。
+已按 `plans/github-automation-ui-plan.md` 闭环交付:
 
-设计草案(参考 stablyai/orca 的 task/worktree 关联):
-1. 新表 `github_automations`:board_id、repository_id、agent_id、rule(pr_merged/issue_opened/
-   issue_comment 等)、enabled、routing 配置。
-2. daemon 轮询器 `githubAutomation.ts`:复用 gh CLI,定期(如 60s)拉取关联仓库的
-   PR/issues(gh pr list / gh issue list),对比已处理游标,产出事件。
-3. 自动执行:PR merged → 完成关联任务(review_enabled 流程);issues → 为关联 agent 创建
-   任务并 dispatch(或入队 maintainer run)。
-4. UI:自动化界面(仓库/agent/规则配置 + 事件日志),复用 maintainer_runs 展示模式。
-5. `maintainer_event_cursors` 表(迁移 0049 已建)存储仓库轮询 ETag/最新事件。
+- **迁移 0051**:`github_automations`(board↔repository↔agent 规则,唯一约束 (board_id,
+  repository_id))+ `github_automation_events`(事件日志,唯一约束 (automation_id,
+  event_type, subject) 幂等去重)。
+- **服务端 `automationRepo.ts`**:规则 CRUD、事件幂等入队、`issue.opened → createTask`
+  状态机(为关联 agent 建任务,metadata 记 github_issue_number/repo/url;同 issue 已有
+  活跃任务不重复建,任务终态后重建);机器查询端点(listAutomationTasks 不经过
+  runtime_source 过滤)。
+- **routes.ts/auth.ts**:用户规则 CRUD(带 board/仓库/worker agent 归属校验)、事件日志
+  读取;机器上报 POST events / PATCH events、GET /api/automations/active、
+  GET /api/automations/:id/tasks。
+- **CLI daemon `githubAutomationPoller.ts`**(接入 daemon/index.ts):每 60s 拉取启用规则,
+  `gh issue list` 增量上报 issue.opened;任务 in_review + pr_url → `gh issue comment`
+  回复 → issue.replied;任务 done(PrMonitor 已 mark)→ `gh issue close` → issue.closed。
+  gh 失败按 failureCount 退避并提示 `gh auth login`。
+- **前端**:AutomationPage(规则卡片 + 事件日志表格,状态/类型徽章,subject 跳 GitHub)、
+  AutomationDialog(仓库/worker agent/事件规则配置)、路由 `/boards/:boardId/automations`
+  + Header 图标入口。
+- 闭环:用户提交 issue → 自动建任务 → agent worktree 开发 → 提交 PR → 自动回复 issue →
+  PR 合并 → 任务 done → 自动关闭关联 issue。全程幂等,重复轮询不重复建任务/评论/关闭。
+- 测试:服务端 `tests/automation-repo.test.ts`(8)、poller `github-automation-poller.test.ts`(5)、
+  UI `tests/automation-page.test.tsx`(5);全量回归 2447 通过,`pnpm typecheck` + `pnpm build` 通过。
 
-测试基线:全量约 2429 通过(服务端 + CLI + 前端)。
+测试基线:全量约 2447 通过(服务端 + CLI + 前端)。
