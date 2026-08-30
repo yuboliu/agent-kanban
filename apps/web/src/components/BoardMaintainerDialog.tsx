@@ -16,7 +16,7 @@ interface BoardMaintainer {
   interval_seconds: number;
   heartbeat_enabled?: boolean;
   review_enabled?: boolean;
-  scheduler_type?: "local" | "ama";
+  scheduler_type?: "local";
 }
 
 interface MaintainerAgent {
@@ -102,7 +102,7 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit maintainer" : "Add maintainer"}</DialogTitle>
           <DialogDescription>
-            Choose how this maintainer is triggered. Local schedules use <code>ak start</code>; AMA deployments use managed triggers.
+            Choose how this maintainer is triggered. Local schedules use <code>ak start</code>.
           </DialogDescription>
         </DialogHeader>
 

@@ -1,5 +1,5 @@
 import { AK_ANNOTATION_KEY_SOURCE_EVENT, AK_ANNOTATION_KEY_SOURCE_URL, AK_LABEL_KEY_GITHUB_SUBJECT } from "@agent-kanban/shared";
-import { ArrowLeft, ExternalLink, FileText, KeyRound, MessageSquare, Pencil, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, KeyRound, Pencil, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Link, useParams } from "react-router-dom";
@@ -7,14 +7,12 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { BoardMaintainerDialog } from "../components/BoardMaintainerDialog";
-import { AmaSessionChat } from "../components/ChatPanel";
 import { Header } from "../components/Header";
 import { formatRelative } from "../components/TaskDetailFields";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../components/ui/sheet";
 import { Skeleton } from "../components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -24,7 +22,6 @@ import {
   useBoardMaintainer,
   useBoardMaintainerMemories,
   useBoardMaintainerRuns,
-  useBoardMaintainerSessions,
   useBoardMaintainerVariables,
   useUpdateBoardMaintainerVariables,
 } from "../hooks/useBoard";
@@ -55,18 +52,6 @@ interface MaintainerVariable {
   name: string;
 }
 
-interface MaintainerSession {
-  id: string;
-  title?: string | null;
-  state?: string | null;
-  agentId?: string | null;
-  createdAt?: string | null;
-  startedAt?: string | null;
-  updatedAt?: string | null;
-  stoppedAt?: string | null;
-  metadata?: Record<string, unknown>;
-}
-
 interface GithubSubject {
   event: string | null;
   action: string | null;
@@ -83,7 +68,6 @@ export function MaintainerDetailPage() {
   const { board, loading: boardLoading } = useBoard(boardId);
   const { maintainer, loading: maintainerLoading, refresh: refreshMaintainer } = useBoardMaintainer(boardId, maintainerId);
   const { runs, loading: runsLoading, refresh: refreshRuns } = useBoardMaintainerRuns(boardId, maintainerId);
-  const { sessions, loading: sessionsLoading, refresh: refreshSessions } = useBoardMaintainerSessions(maintainerId);
   const { memories, loading: memoriesLoading, error: memoriesError, refresh: refreshMemories } = useBoardMaintainerMemories(boardId, maintainerId);
   const {
     variables,
@@ -93,7 +77,6 @@ export function MaintainerDetailPage() {
   } = useBoardMaintainerVariables(boardId, maintainerId);
   const updateVariables = useUpdateBoardMaintainerVariables(boardId, maintainerId);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selectedSession, setSelectedSession] = useState<MaintainerSession | null>(null);
   const [variablesDialogOpen, setVariablesDialogOpen] = useState(false);
   const [schedulerDialogOpen, setSchedulerDialogOpen] = useState(false);
 
@@ -113,7 +96,7 @@ export function MaintainerDetailPage() {
   const selectedMemory = memories.find((memory: MaintainerMemory) => memory.path === selectedPath) ?? null;
 
   async function refreshAll() {
-    await Promise.all([refreshMaintainer(), refreshSessions(), refreshRuns(), refreshMemories(), refreshVariables()]);
+    await Promise.all([refreshMaintainer(), refreshRuns(), refreshMemories(), refreshVariables()]);
   }
 
   async function saveVariables(nextVariables: Record<string, string>) {
@@ -164,7 +147,7 @@ export function MaintainerDetailPage() {
           <Metric label="Agent" value={maintainer.agent_id ?? "unbound"} />
           <Metric label="Heartbeat" value={maintainer.heartbeat_enabled === false ? "off" : "on"} />
           <Metric label="Review events" value={maintainer.review_enabled === false ? "off" : "on"} />
-          <Metric label="Scheduler" value={maintainer.scheduler_type === "local" ? "local ak start" : "AMA"} />
+          <Metric label="Scheduler" value="local ak start" />
           <Metric label="Interval" value={formatInterval(maintainer.interval_seconds)} />
           <Metric label="Last run" value={maintainer.last_run_at ? formatRelative(maintainer.last_run_at) : "never"} />
           <Metric label="Last session" value={maintainer.last_session_id ?? "none"} />
@@ -174,12 +157,8 @@ export function MaintainerDetailPage() {
           <div className="mt-4 rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-sm text-error">{maintainer.last_error_message}</div>
         ) : null}
 
-        <Tabs defaultValue="sessions" className="mt-8 gap-5">
+        <Tabs defaultValue="memory" className="mt-8 gap-5">
           <TabsList variant="line" aria-label="Maintainer detail sections" className="border-b border-border">
-            <TabsTrigger value="sessions" className="px-3 font-mono text-xs">
-              Sessions
-              <span className="ml-1 text-content-tertiary">{sessions.length}</span>
-            </TabsTrigger>
             <TabsTrigger value="memory" className="px-3 font-mono text-xs">
               Memory
               <span className="ml-1 text-content-tertiary">{memories.length}</span>
@@ -193,10 +172,6 @@ export function MaintainerDetailPage() {
               <span className="ml-1 text-content-tertiary">{runs.length}</span>
             </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="sessions">
-            <SessionsPanel sessions={sessions as MaintainerSession[]} loading={sessionsLoading} onOpenSession={setSelectedSession} />
-          </TabsContent>
 
           <TabsContent value="memory">
             <MemoryPanel
@@ -220,15 +195,10 @@ export function MaintainerDetailPage() {
           </TabsContent>
 
           <TabsContent value="activity">
-            <ActivityPanel runs={runs as MaintainerRun[]} loading={runsLoading} onOpenSession={setSelectedSession} />
+            <ActivityPanel runs={runs as MaintainerRun[]} loading={runsLoading} />
           </TabsContent>
         </Tabs>
       </main>
-      <MaintainerSessionDrawer
-        maintainerName={maintainer.agent_id ?? maintainer.id}
-        session={selectedSession}
-        onOpenChange={(open) => !open && setSelectedSession(null)}
-      />
       <VariablesDialog
         open={variablesDialogOpen}
         variables={variables as MaintainerVariable[]}
@@ -254,75 +224,6 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="min-w-0">
       <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-content-tertiary">{label}</div>
       <div className="mt-1 truncate font-mono text-xs text-content-primary">{value}</div>
-    </div>
-  );
-}
-
-function SessionsPanel({
-  sessions,
-  loading,
-  onOpenSession,
-}: {
-  sessions: MaintainerSession[];
-  loading: boolean;
-  onOpenSession: (session: MaintainerSession) => void;
-}) {
-  if (loading) {
-    return (
-      <div className="space-y-2">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-      </div>
-    );
-  }
-
-  if (sessions.length === 0) {
-    return (
-      <p className="rounded-lg border border-border bg-surface-secondary px-3 py-8 text-center text-sm text-content-tertiary">No sessions yet.</p>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-secondary">
-      <Table>
-        <TableHeader>
-          <TableRow className="border-border bg-surface-secondary hover:bg-surface-secondary">
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Session</TableHead>
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Subject</TableHead>
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">State</TableHead>
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Last activity</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sessions.map((session) => {
-            const github = githubSubjectFromMetadata(session.metadata);
-            return (
-              <TableRow key={session.id} className="border-border hover:bg-surface-tertiary">
-                <TableCell className="max-w-[240px] truncate px-3 py-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 min-w-0 justify-start gap-2 px-1 font-mono text-xs text-accent hover:text-accent"
-                    onClick={() => onOpenSession(session)}
-                    title={session.id}
-                  >
-                    <MessageSquare className="size-3.5 shrink-0" />
-                    <span className="truncate">{session.id}</span>
-                  </Button>
-                </TableCell>
-                <TableCell className="max-w-[360px] px-3 py-2">
-                  <GithubSubjectLink subject={github} fallback={session.title ?? "No subject"} />
-                </TableCell>
-                <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">{session.state ?? "unknown"}</TableCell>
-                <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">
-                  {sessionLastActivity(session) ? formatRelative(sessionLastActivity(session)!) : "unknown"}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
     </div>
   );
 }
@@ -525,55 +426,7 @@ function unquoteEnvValue(value: string): string {
   return value;
 }
 
-function MaintainerSessionDrawer({
-  maintainerName,
-  session,
-  onOpenChange,
-}: {
-  maintainerName: string;
-  session: MaintainerSession | null;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Sheet open={!!session} onOpenChange={onOpenChange}>
-      <SheetContent showCloseButton={false} className="flex flex-col gap-0 p-0 shadow-2xl !w-[50%] max-md:!w-full">
-        <SheetTitle className="sr-only">Maintainer session</SheetTitle>
-        <SheetDescription className="sr-only">Maintainer runtime events</SheetDescription>
-        {session ? (
-          <>
-            <div className="flex items-center gap-3 border-b border-border p-4">
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-mono text-[13px] text-accent">{maintainerName}</span>
-                <GithubSubjectLink subject={githubSubjectFromMetadata(session.metadata)} fallback={session.title ?? session.id} compact />
-                <span className="truncate font-mono text-[11px] text-content-tertiary">{session.id}</span>
-              </div>
-              <Button variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="Close session">
-                <X className="size-3.5" />
-              </Button>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col pl-4 pb-4">
-              <AmaSessionChat
-                sessionId={session.id}
-                taskDone={isTerminalSessionState(session.state)}
-                unavailableMessage="Session history is not available for this maintainer session."
-              />
-            </div>
-          </>
-        ) : null}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function ActivityPanel({
-  runs,
-  loading,
-  onOpenSession,
-}: {
-  runs: MaintainerRun[];
-  loading: boolean;
-  onOpenSession: (session: MaintainerSession) => void;
-}) {
+function ActivityPanel({ runs, loading }: { runs: MaintainerRun[]; loading: boolean }) {
   if (loading) {
     return (
       <div className="space-y-2">
@@ -605,7 +458,6 @@ function ActivityPanel({
         <TableBody>
           {runs.map((run) => {
             const github = githubSubjectFromMetadata(run.metadata);
-            const session = run.session_id ? ({ id: run.session_id, metadata: run.metadata } satisfies MaintainerSession) : null;
             return (
               <TableRow key={run.id} className="border-border hover:bg-surface-tertiary">
                 <TableCell className="max-w-[360px] px-3 py-2" title={run.id}>
@@ -617,21 +469,8 @@ function ActivityPanel({
                 <TableCell className="px-3 py-2">
                   <Badge variant={runStatusBadgeVariant(run.status)}>{run.status}</Badge>
                 </TableCell>
-                <TableCell className="max-w-[180px] truncate px-3 py-2" title={run.session_id ?? ""}>
-                  {session ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 min-w-0 justify-start gap-2 px-1 font-mono text-xs text-accent hover:text-accent"
-                      onClick={() => onOpenSession(session)}
-                    >
-                      <MessageSquare className="size-3.5 shrink-0" />
-                      <span className="truncate">{session.id}</span>
-                    </Button>
-                  ) : (
-                    <span className="font-mono text-xs text-content-secondary">none</span>
-                  )}
+                <TableCell className="max-w-[180px] truncate px-3 py-2 font-mono text-xs text-content-secondary" title={run.session_id ?? ""}>
+                  {run.session_id ?? "none"}
                 </TableCell>
                 <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">
                   {runTimestamp(run) ? formatRelative(runTimestamp(run)!) : "unknown"}
@@ -880,14 +719,6 @@ function GithubSubjectLink({ subject, fallback, compact = false }: { subject: Gi
 
 function runTimestamp(run: MaintainerRun): string | null {
   return run.heartbeat_at ?? run.triggered_at ?? run.created_at ?? null;
-}
-
-function sessionLastActivity(session: MaintainerSession): string | null {
-  return session.updatedAt ?? session.stoppedAt ?? session.startedAt ?? session.createdAt ?? null;
-}
-
-function isTerminalSessionState(state: string | null | undefined) {
-  return state === "stopped" || state === "error";
 }
 
 function formatDate(value: string) {

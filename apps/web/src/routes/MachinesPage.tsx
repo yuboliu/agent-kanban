@@ -33,8 +33,6 @@ export function MachinesPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [createdKeyId, setCreatedKeyId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
-  const [creatingCloud, setCreatingCloud] = useState(false);
-  const [cloudName, setCloudName] = useState("");
 
   async function handleChooseLocal() {
     const name = randomName();
@@ -43,28 +41,6 @@ export function MachinesPage() {
     setCreatedKey(data.key);
     setCreatedKeyId(data.id);
     setDialogStep("waiting");
-  }
-
-  function handleChooseCloud() {
-    setCloudName("");
-    setDialogStep("cloud");
-  }
-
-  async function handleCreateCloud() {
-    const name = cloudName.trim();
-    if (!name) return;
-    setCreatingCloud(true);
-    try {
-      await api.machines.createCloud({ name });
-      toast.success("Cloud sandbox added");
-      resetDialog();
-      refresh();
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      toast.error(status === 403 ? "Connect AMA to add a cloud sandbox" : (err as Error).message || "Failed to add cloud sandbox");
-    } finally {
-      setCreatingCloud(false);
-    }
   }
 
   const handleConnected = useCallback(async () => {
@@ -85,7 +61,6 @@ export function MachinesPage() {
     setCreatedKey(null);
     setCreatedKeyId(null);
     setConnected(false);
-    setCloudName("");
   }
 
   return (
@@ -206,57 +181,6 @@ export function MachinesPage() {
                   <div className="text-[11px] text-content-tertiary">Run the daemon on this machine</div>
                 </div>
               </button>
-              <button
-                onClick={handleChooseCloud}
-                disabled={creatingCloud}
-                className="w-full flex items-center gap-3 bg-surface-primary border border-border rounded-lg px-4 py-3 hover:border-accent/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="text-content-secondary shrink-0"
-                >
-                  <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-                </svg>
-                <div>
-                  <div className="text-sm font-medium text-content-primary">Cloud Sandbox</div>
-                  <div className="text-[11px] text-content-tertiary">{creatingCloud ? "Creating..." : "Run on an AMA-managed sandbox"}</div>
-                </div>
-              </button>
-            </div>
-          )}
-
-          {dialogStep === "cloud" && (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <label htmlFor="cloud-sandbox-name" className="text-xs text-content-secondary">
-                  Sandbox name
-                </label>
-                <Input
-                  id="cloud-sandbox-name"
-                  autoFocus
-                  value={cloudName}
-                  onChange={(e) => setCloudName(e.target.value)}
-                  placeholder="e.g. my-sandbox"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreateCloud();
-                  }}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => setDialogStep("choose")} disabled={creatingCloud}>
-                  Back
-                </Button>
-                <Button size="sm" onClick={handleCreateCloud} disabled={!cloudName.trim() || creatingCloud}>
-                  {creatingCloud ? "Creating..." : "Add sandbox"}
-                </Button>
-              </div>
             </div>
           )}
 

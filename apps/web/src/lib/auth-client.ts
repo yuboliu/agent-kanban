@@ -35,7 +35,7 @@ export async function refreshAuthToken(): Promise<string | null> {
 }
 
 export const authClient = createAuthClient({
-  plugins: [agentAuthClient(), apiKeyClient(), adminClient(), genericOAuthClient(), usernameClient()],
+  plugins: [agentAuthClient(), apiKeyClient(), adminClient(), usernameClient()],
   fetchOptions: {
     auth: {
       type: "Bearer",
@@ -84,10 +84,6 @@ type AccountAuthClient = {
   revokeOtherSessions: () => AuthResult<{ status: boolean }>;
   linkSocial: (body: { provider: string; callbackURL?: string }) => AuthResult<unknown>;
   unlinkAccount: (body: { providerId: string; accountId?: string }) => AuthResult<{ status: boolean }>;
-  // Generic OIDC link (AMA). The genericOAuth client exposes it as oauth2.link.
-  oauth2: {
-    link: (body: { providerId: string; callbackURL?: string }) => AuthResult<{ url: string; redirect: boolean }>;
-  };
 };
 
 export const accountAuthClient = authClient as unknown as AccountAuthClient;

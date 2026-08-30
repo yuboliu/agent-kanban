@@ -63,8 +63,6 @@ export const api = {
       return request<any[]>("GET", `/tasks${qs}`);
     },
     get: (id: string) => request<any>("GET", `/tasks/${id}`),
-    session: (id: string) => request<any>("GET", `/tasks/${id}/session`),
-    sessionWs: (id: string) => request<{ url: string }>("GET", `/tasks/${id}/session/ws`),
     create: (input: Record<string, unknown>) => request<any>("POST", "/tasks", input),
     update: (id: string, body: Record<string, unknown>) => request<any>("PATCH", `/tasks/${id}`, body),
     delete: (id: string) => request<void>("DELETE", `/tasks/${id}`),
@@ -90,20 +88,6 @@ export const api = {
     },
     create: (taskId: string, body: { sender_type: string; sender_id: string; content: string }) =>
       request<any>("POST", `/tasks/${taskId}/messages`, body),
-  },
-  sessions: {
-    list: (params?: { limit?: number; cursor?: string; state?: string; archived?: boolean; labelSelector?: string }) => {
-      const query = new URLSearchParams();
-      if (params?.limit !== undefined) query.set("limit", String(params.limit));
-      if (params?.cursor) query.set("cursor", params.cursor);
-      if (params?.state) query.set("state", params.state);
-      if (params?.archived !== undefined) query.set("archived", String(params.archived));
-      if (params?.labelSelector) query.set("labelSelector", params.labelSelector);
-      const qs = query.size > 0 ? `?${query.toString()}` : "";
-      return request<{ data: any[]; pagination: any }>("GET", `/sessions${qs}`);
-    },
-    get: (id: string) => request<any>("GET", `/sessions/${id}`),
-    sessionWs: (id: string) => request<{ url: string }>("GET", `/sessions/${id}/ws`),
   },
   agents: {
     list: (params?: Record<string, string>) => {
@@ -133,11 +117,7 @@ export const api = {
   machines: {
     list: () => request<any[]>("GET", "/machines"),
     get: (id: string) => request<any>("GET", `/machines/${id}`),
-    createCloud: (input?: { name?: string }) => request<any>("POST", "/machines/cloud", input ?? {}),
     delete: (id: string) => request<void>("DELETE", `/machines/${id}`),
-  },
-  ama: {
-    provision: () => request<{ ok: boolean; project_id: string }>("POST", "/ama/provision"),
   },
   subagents: {
     list: () => request<any[]>("GET", "/subagents"),

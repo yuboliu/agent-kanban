@@ -259,7 +259,7 @@ export function isValidSkillRef(value: string): boolean {
   return SKILL_REF_RE.test(value);
 }
 
-/** `ak@<name>` refs resolve to the owner's AK-stored custom skills, installed by the local daemon. AMA cannot resolve them. */
+/** `ak@<name>` refs resolve to the owner's AK-stored custom skills, installed by the local daemon. */
 export function isAkSkillRef(value: string): boolean {
   return value.startsWith("ak@") && isValidSkillRef(value);
 }

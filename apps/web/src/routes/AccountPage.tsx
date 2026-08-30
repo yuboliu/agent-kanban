@@ -1,6 +1,6 @@
-import { CheckCircle2, Cloud, Github, Monitor, RefreshCw, Shield } from "lucide-react";
+import { CheckCircle2, Github, Monitor, RefreshCw, Shield } from "lucide-react";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -8,7 +8,6 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import { useGithubAppConfig } from "../hooks/useGithubApp";
-import { api } from "../lib/api";
 import { accountAuthClient, type LinkedAccount, type SessionEntry, useSession } from "../lib/auth-client";
 import { cn } from "../lib/utils";
 
@@ -65,21 +64,6 @@ export function AccountPage() {
 
   const hasCredentialAccount = accounts?.some((a) => a.providerId === "credential") ?? false;
   const githubAccount = accounts?.find((a) => a.providerId === "github");
-  const amaAccount = accounts?.find((a) => a.providerId === "ama");
-
-  // Once the AMA account is linked, provision the owner's AMA project + vault so
-  // resources exist before they create an agent or machine. The endpoint is
-  // idempotent; provision once per linked account id.
-  const provisionedAccountId = useRef<string | null>(null);
-  useEffect(() => {
-    if (!amaAccount || provisionedAccountId.current === amaAccount.id) return;
-    provisionedAccountId.current = amaAccount.id;
-    api.ama.provision().catch(() => {
-      // Best-effort: agent/machine creation will surface a clear error if AMA
-      // resources are still missing.
-      provisionedAccountId.current = null;
-    });
-  }, [amaAccount]);
 
   const [githubConnecting, setGithubConnecting] = useState(false);
   const [githubError, setGithubError] = useState<string | null>(null);
@@ -94,43 +78,6 @@ export function AccountPage() {
       setGithubError(msg);
       toast.error(msg);
     }
-  }
-
-  const [amaConnecting, setAmaConnecting] = useState(false);
-  const [amaError, setAmaError] = useState<string | null>(null);
-
-  async function handleConnectAma() {
-    setAmaConnecting(true);
-    setAmaError(null);
-    const { data, error } = await accountAuthClient.oauth2.link({ providerId: "ama", callbackURL: "/settings/account" });
-    if (error) {
-      setAmaConnecting(false);
-      const msg = error.message || "Failed to connect AMA";
-      setAmaError(msg);
-      toast.error(msg);
-      return;
-    }
-    // The link endpoint returns the AMA authorization URL to redirect to.
-    if (data?.url) {
-      window.location.href = data.url;
-      return;
-    }
-    setAmaConnecting(false);
-  }
-
-  async function handleDisconnectAma() {
-    setAmaConnecting(true);
-    setAmaError(null);
-    const { error } = await accountAuthClient.unlinkAccount({ providerId: "ama" });
-    setAmaConnecting(false);
-    if (error) {
-      const msg = error.message || "Failed to disconnect AMA";
-      setAmaError(msg);
-      toast.error(msg);
-      return;
-    }
-    toast.success("AMA disconnected");
-    loadAccounts();
   }
 
   return (
@@ -250,59 +197,6 @@ export function AccountPage() {
             </div>
           </div>
         )}
-      </section>
-
-      {/* AMA connection */}
-      <section className="space-y-4">
-        <SectionHeader icon={Cloud} title="AMA" />
-        <div className="max-w-2xl rounded-lg border border-border bg-surface-secondary p-4">
-          {accountsLoading ? (
-            <Skeleton className="h-8 w-48" />
-          ) : accountsError ? (
-            <p role="alert" className="text-sm text-error">
-              {accountsError}
-            </p>
-          ) : amaAccount ? (
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-content-primary">AMA connected</p>
-                <p className="text-xs text-content-tertiary">
-                  Account ID: <span className="font-mono">{amaAccount.accountId}</span>
-                </p>
-                {amaError && (
-                  <p role="alert" className="text-xs text-error">
-                    {amaError}
-                  </p>
-                )}
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button variant="outline" size="sm" onClick={handleConnectAma} disabled={amaConnecting}>
-                  <RefreshCw className="size-3.5" />
-                  {amaConnecting ? "Working..." : "Reconnect"}
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleDisconnectAma} disabled={amaConnecting}>
-                  Disconnect
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-content-primary">AMA not connected</p>
-                <p className="text-xs text-content-tertiary">Connect AMA to enable cloud scheduling and dispatch agents to your own AMA account.</p>
-                {amaError && (
-                  <p role="alert" className="text-xs text-error">
-                    {amaError}
-                  </p>
-                )}
-              </div>
-              <Button size="sm" onClick={handleConnectAma} disabled={amaConnecting} className="shrink-0">
-                <Cloud className="size-3.5" />
-                {amaConnecting ? "Connecting..." : "Connect AMA"}
-              </Button>
-            </div>
-          )}
-        </div>
       </section>
 
       {/* Change password */}
