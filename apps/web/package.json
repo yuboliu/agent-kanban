@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,web -c blue,green \"pnpm server\" \"pnpm client\"",
+    "dev": "concurrently -k -n api,web -c blue,green \"pnpm run server\" \"pnpm run client\"",
     "server": "AK_PORT=${AK_API_PORT:-8787} tsx server/node/cli.ts",
     "client": "vite dev",
     "prebuild": "pnpm --filter @agent-kanban/shared build && pnpm --filter agent-kanban build && mkdir -p public/cli && cp ../../packages/cli/dist/standalone.js public/cli/ak-standalone.mjs",

@@ -60,8 +60,6 @@ export function startCli(options: CliOptions): void {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Run the CLI when executed directly (not when imported by tests).
-const isMain = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
-if (isMain) {
-  startCli(resolveCliOptions());
-}
+// Entrypoint: this module is only ever executed directly (pnpm server /
+// service_runner.sh), never imported by the server, so run immediately.
+startCli(resolveCliOptions());
