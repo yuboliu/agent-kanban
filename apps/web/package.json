@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "db:migrate": "tsx server/database/migrate-cli.ts",
     "db:reset": "rm -f \"${AK_DATABASE_PATH:-$HOME/.local/share/agent-kanban/agent-kanban.sqlite}\" && pnpm db:migrate",
+    "local:migrate": "tsx server/database/importD1-cli.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
