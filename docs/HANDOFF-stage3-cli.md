@@ -57,14 +57,24 @@
    - 保留:`AK_ANNOTATION_KEY_*`(GitHub 来源元数据)、`RelayRuntimeProvider`/`relaySessionId`(legacy daemon tunnel)、
      admin `SessionsPanel`、`api.agents.sessions`(后端存在)。
    - 注意:`replace_in_file` 在并发编辑时"报告成功但未生效"频繁发生,改完必须 read_file 复核 + 全仓搜索确认。
-3. **schema/迁移清理**(`apps/web/migrations`):
-   - `agents.ama_agent_id`、`machines.ama_environment_id`、`board_maintainers.ama_schedule_id`/
-     `ama_http_trigger_id`/`ama_memory_store_id`/`ama_board_vault_id` 等、`ama_agent_sessions.ama_session_id`/
-     `secret_ref`。新建迁移删除列(注意 board_maintainers.ama_schedule_id 现为
-     `local:<id>` 占位,需先转换再删)。
-4. **repo 残留**(`boardMaintainerRepo`/`machineRepo`/`taskRepo`/`runtimeBindingRepo`):
-   - 删 AMA 列读取/写入与分支(如 `ama_environment_id`、`ama_http_trigger_serialized`)。
-5. **wrangler 配置**:删 AMA env 绑定与 `wrangler.jsonc` 中 AMA vars。
+3. ~~**schema/迁移清理**~~ ✅ 已完成(commit `b266f9c`,含迁移 `0048_drop_ama_columns.sql`):
+   - 迁移先 DROP 相关索引再 `ALTER TABLE ... DROP COLUMN`,删 `agents.ama_agent_id`、
+     `machines.ama_environment_id`、`board_maintainers.ama_schedule_id`/`ama_http_trigger_id`/
+     `ama_http_trigger_serialized`/`ama_http_trigger_serialization_attempted_at`/`ama_memory_store_id`/
+     `ama_board_vault_id`/`last_ama_session_id`(SQLite 有索引/UNIQUE 的列需先删索引)。
+   - **保留**:`ama_agent_sessions` 表及其 `ama_session_id`/`secret_ref`/`secret_credential_id` 列
+     (agent 会话认证核心,agentSessionRepo/auth.ts/agentRepo/statsRepo 在使用);如需彻底可后续单独改名。
+4. ~~**repo 残留**~~ ✅ 已完成(commit `b266f9c`):
+   - `machineRepo`:删 `createCloudMachine`/`updateMachineAmaEnvironment`/
+     `listMachineEnvironmentCandidatesForRuntime`(全部无调用方死代码)与 `MachineRecord.ama_environment_id`;
+   - `boardMaintainerRepo`:BoardMaintainer/CreateBoardMaintainerInput 删全部 `ama_*` 字段,
+     INSERT 删列,删 `setBoardMaintainerVaultId`/`markBoardMaintainerHttpTriggerSerialized`/
+     `markBoardMaintainerHttpTriggerSerializationAttempted`/`listUnserializedBoardMaintainers`;
+     `listActiveBoardMaintainersForRepository` 删 `ama_http_trigger_id IS NOT NULL` 条件;
+   - `routes.ts`:publicBoardMaintainer 删 ama 字段、createMaintainer 不再写 `amaScheduleId`,
+     `isLocalBoardMaintainer` 删除(maintainer 恒 local)、publicMachine 去 `ama_environment_id`。
+5. ~~**wrangler 配置**~~ ✅ 已完成(commit `b266f9c`):删 `AMA_ORIGIN`/`AMA_OIDC_*`/`AMA_RUNNER_VERSION`
+   vars(生产+staging)与注释;`wrangler-config.test.ts` 改为断言无 AMA vars。
 6. **阶段 4**:Local Maintainer 完整替代(本地 schedule/trigger 已部分存在:
    `maintainerScheduler.ts`、`POST .../maintainers/:id/local-runs`、`ak local_start`)。
 
