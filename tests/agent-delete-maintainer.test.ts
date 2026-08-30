@@ -214,76 +214,37 @@ describe("agent deletion route cleanup contract", () => {
   const deleteRoute = routes.match(/api\.delete\("\/api\/agents\/:id",[\s\S]*?\n\}\);/)?.[0] ?? "";
   const cleanupHelper = routes.match(/async function deleteBoardMaintainerExternalResources[\s\S]*?\n\}/)?.[0] ?? "";
 
-  it("owner-scopes the lineage lookup and completes AMA cleanup before local deletion", () => {
+  it("owner-scopes the lineage lookup and completes cleanup before local deletion", () => {
     expect(deleteRoute).toContain("listBoardMaintainersForAgentLineage(c.env.DB, ownerId, agent.username)");
     expect(deleteRoute).toContain("const deletingMaintainerIds = new Set(maintainers.map((maintainer) => maintainer.id))");
     expect(deleteRoute).toContain("deleteBoardMaintainerExternalResources(c.env.DB, c.env, ownerId, maintainer, deletingMaintainerIds)");
     expect(deleteRoute).toContain("deleteAgent(c.env.DB, agent.id, [...deletingMaintainerIds])");
     expect(deleteRoute.indexOf("deleteBoardMaintainerExternalResources")).toBeLessThan(deleteRoute.indexOf("deleteAgent(c.env.DB, agent.id"));
-    expect(cleanupHelper).toContain("deleteAmaScheduledAgentTrigger");
-    expect(cleanupHelper).toContain("deleteAmaTrigger");
-    expect(cleanupHelper).toContain("archiveAmaMemoryStore");
-    expect(cleanupHelper.indexOf("deleteAmaScheduledAgentTrigger")).toBeLessThan(cleanupHelper.indexOf("deleteAmaTrigger"));
-    expect(cleanupHelper.indexOf("deleteAmaTrigger")).toBeLessThan(cleanupHelper.indexOf("archiveAmaMemoryStore"));
-  });
-
-  it("requires AMA configuration for an AMA row before touching local lineage data", () => {
-    expect(cleanupHelper.indexOf("isLocalBoardMaintainer(maintainer)) return")).toBeLessThan(
-      cleanupHelper.indexOf("isAmaTaskDispatchConfigured(env)"),
-    );
-    expect(cleanupHelper).toContain('throw new HTTPException(409, { message: "AMA scheduler must be configured before deleting this maintainer" })');
     expect(deleteRoute.indexOf("await deleteBoardMaintainerExternalResources")).toBeLessThan(deleteRoute.indexOf("await deleteAgent"));
   });
 
-  it("requires AMA configuration and a project mapping for a persisted AMA agent before local deletion", () => {
-    const amaGuard = deleteRoute.slice(deleteRoute.indexOf("if (agent.ama_agent_id)"), deleteRoute.indexOf("const email"));
-    expect(amaGuard).toContain("if (!isAmaTaskDispatchConfigured(c.env))");
-    expect(amaGuard).toContain("AMA scheduler must be configured before deleting this agent");
-    expect(amaGuard).toContain("const amaProjectId = await getAmaProjectId(c.env.DB, ownerId)");
-    expect(amaGuard).toContain("AMA project mapping is required before deleting this agent");
-    expect(amaGuard).toContain("await archiveAmaAgent(c.env, ownerId, amaProjectId, agent.ama_agent_id)");
-    expect(deleteRoute.indexOf("if (agent.ama_agent_id)")).toBeLessThan(deleteRoute.indexOf("await deleteAgent(c.env.DB, agent.id"));
-  });
-
-  it("does not locally delete when an AMA cleanup rejects", () => {
-    const cleanupLoop = deleteRoute.slice(deleteRoute.indexOf("for (const maintainer"), deleteRoute.indexOf("// AMA has no hard delete"));
+  it("does not locally delete when an external cleanup rejects", () => {
+    const cleanupLoop = deleteRoute.slice(deleteRoute.indexOf("for (const maintainer"), deleteRoute.indexOf("const email"));
     expect(cleanupLoop).toContain("await deleteBoardMaintainerExternalResources");
     expect(cleanupLoop).not.toContain("catch");
     expect(deleteRoute.indexOf("await deleteBoardMaintainerExternalResources")).toBeLessThan(deleteRoute.indexOf("await deleteAgent"));
   });
 
-  it("skips AMA calls for local maintainers and returns a stable success envelope", () => {
-    expect(cleanupHelper).toContain("isLocalBoardMaintainer(maintainer)) return");
-    expect(deleteRoute).toContain("return c.json({ ok: true })");
-    expect(deleteRoute).not.toContain("error.message");
-    expect(deleteRoute).not.toContain("constraint failed");
-  });
-
-  it("revokes shared credentials and the scoped BetterAuth key only for the final maintainer", () => {
+  it("revokes the scoped BetterAuth API key only for the final maintainer", () => {
     expect(cleanupHelper).toContain("!deletingMaintainerIds.has(candidate.id)");
-    expect(cleanupHelper).toContain("candidate.ama_board_vault_id === maintainer.ama_board_vault_id");
-    expect(cleanupHelper).toContain("if (!sharedVault && maintainer.ama_board_vault_id)");
-    expect(cleanupHelper).toContain('credential.name === AK_VARIABLES_CREDENTIAL_NAME && credential.state === "active"');
-    expect(cleanupHelper).toContain('"AK board maintainer deleted"');
     expect(cleanupHelper).toContain("if (!sharedApiKey && maintainer.api_key_id)");
     expect(cleanupHelper).toContain('{ field: "id", value: maintainer.api_key_id }');
     expect(cleanupHelper).toContain('{ field: "referenceId", value: ownerId }');
   });
 
-  it("deletes an old API key when a shared-vault survivor uses a different key", () => {
+  it("deletes an old API key when a shared-key survivor uses a different key", () => {
     expect(cleanupHelper).toContain("candidate.api_key_id === maintainer.api_key_id");
-    expect(cleanupHelper).toContain(
-      "candidate.api_key_id == null && maintainer.ama_board_vault_id != null && candidate.ama_board_vault_id === maintainer.ama_board_vault_id",
-    );
     expect(cleanupHelper).not.toContain("sharedVault && maintainer.api_key_id");
   });
 
-  it("is retryable after partial remote cleanup because every completed remote delete is idempotent", () => {
-    const amaRuntime = readFileSync(new URL("../apps/web/server/amaRuntime.ts", import.meta.url), "utf8");
-    expect(cleanupHelper).not.toContain("maintainer cleanup complete");
-    expect(amaRuntime).toContain("if ((error as { status?: unknown }).status === 404) return []");
-    expect(amaRuntime.match(/if \(\(error as \{ status\?: unknown \}\)\.status === 404\) return;/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(cleanupHelper.indexOf("deleteAmaScheduledAgentTrigger")).toBeLessThan(cleanupHelper.indexOf("deleteAmaTrigger"));
-    expect(cleanupHelper.indexOf("deleteAmaTrigger")).toBeLessThan(cleanupHelper.indexOf("archiveAmaMemoryStore"));
+  it("returns a stable success envelope", () => {
+    expect(deleteRoute).toContain("return c.json({ ok: true })");
+    expect(deleteRoute).not.toContain("error.message");
+    expect(deleteRoute).not.toContain("constraint failed");
   });
 });

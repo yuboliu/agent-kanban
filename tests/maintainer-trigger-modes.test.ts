@@ -254,7 +254,7 @@ describe("maintainer routes trigger contracts", () => {
     expect(createRoute).toContain("heartbeatEnabled,");
     expect(createRoute).toContain("reviewEnabled,");
     expect(createRoute).not.toContain("heartbeatEnabled: false");
-    expect(routes).toContain('scheduler_type: isLocalBoardMaintainer(maintainer) ? ("local" as const) : ("ama" as const)');
+    expect(routes).toContain('scheduler_type: "local" as const');
   });
 
   it("atomically claims one maintainer per board and releases failed claims", () => {
@@ -265,16 +265,18 @@ describe("maintainer routes trigger contracts", () => {
     expect(createRoute).toContain("await releaseBoardMaintainerCreation(c.env.DB, ownerId, boardId, maintainerId)");
   });
 
-  it("controls the AMA schedule and HTTP trigger with their respective modes", () => {
-    expect(createRoute).toContain("status: maintainerScheduledStatus(maintainerStatus, heartbeatEnabled)");
-    expect(createRoute).toContain("status: maintainerScheduledStatus(maintainerStatus, reviewEnabled)");
+  it("creates local maintainer rows without any AMA schedule or HTTP trigger", () => {
+    expect(createRoute).not.toContain("createAmaScheduledAgentTrigger");
+    expect(createRoute).not.toContain("createAmaHttpAgentTrigger");
+    expect(createRoute).toContain("amaScheduleId: `local:${maintainerId}`");
+    expect(createRoute).toContain("amaHttpTriggerId: null");
   });
 
-  it("keeps explicit local maintainers independent from AMA connectivity and rejects relay-backed AMA maintainers", () => {
-    expect(createRoute).toContain('const useLocalScheduler = body.scheduler_type === "local" || !amaConfigured');
-    expect(createRoute).toContain("if (!useLocalScheduler) await requireAmaConnected");
-    expect(createRoute).toContain("if (useLocalScheduler)");
-    expect(createRoute).toContain("Relay-backed maintainers must use scheduler_type=local");
+  it("creates every maintainer as a local scheduler row regardless of AMA connectivity", () => {
+    expect(createRoute).not.toContain("useLocalScheduler");
+    expect(createRoute).not.toContain("requireAmaConnected");
+    expect(createRoute).not.toContain("Relay-backed maintainers");
+    expect(createRoute).toContain("amaScheduleId: `local:${maintainerId}`");
   });
 
   it("protects task-scoped runtime configuration as machine-only and never cacheable", () => {
@@ -338,39 +340,10 @@ describe("maintainer routes trigger contracts", () => {
     expect(localRunsRoute).toContain("dispatchAssignedTask");
   });
 
-  it("tracks AMA resources and compensates a failed provisioning attempt in reverse order", () => {
-    const httpFailureCleanup = createRoute.slice(createRoute.indexOf("} catch (error)"));
-    const cleanupSteps = [
-      'compensate("http trigger"',
-      'compensate("schedule"',
-      'compensate("memory store"',
-      'compensate("vault credential"',
-      'compensate("API key"',
-      "releaseBoardMaintainerCreation",
-    ];
-    for (const step of cleanupSteps) expect(httpFailureCleanup).toContain(step);
-    for (let index = 1; index < cleanupSteps.length; index++) {
-      expect(httpFailureCleanup.indexOf(cleanupSteps[index - 1])).toBeLessThan(httpFailureCleanup.indexOf(cleanupSteps[index]));
-    }
-    expect(createRoute.indexOf("provisioned.scheduleId = schedule.id")).toBeLessThan(createRoute.indexOf("createAmaHttpAgentTrigger"));
-    expect(createRoute.indexOf("provisioned.httpTriggerId = httpTrigger.id")).toBeLessThan(createRoute.lastIndexOf("createBoardMaintainer"));
-  });
-
-  it("logs individual AMA cleanup failures without masking the provisioning error", () => {
-    const cleanup = createRoute.slice(createRoute.indexOf("const compensate"));
-    expect(cleanup).toContain("try {");
-    expect(cleanup).toContain("catch (cleanupError)");
-    expect(cleanup).toContain("Maintainer provisioning cleanup failed");
-    expect(cleanup).toContain("throw error");
-  });
-
-  it("reuses a same-name orphan vault and removes a newly-created API key when credential creation fails", () => {
-    expect(routes).toContain("(await listAmaVaults(env, ownerId, amaProjectId, resourceName)).find((vault) => vault.name === resourceName)");
-    const secretHelper = routes.slice(routes.indexOf("async function createMaintainerApiKeySecret"));
-    expect(secretHelper.indexOf("createAmaSessionSecret")).toBeLessThan(secretHelper.indexOf("Maintainer API key cleanup failed"));
-    expect(secretHelper).toContain('model: "apikey"');
-    expect(secretHelper).toContain('field: "id", value: apiKey.id');
-    expect(secretHelper).toContain("throw error");
+  it("releases the creation claim when local persistence fails", () => {
+    expect(createRoute).toContain("if (!maintainerPersisted) {");
+    expect(createRoute).toContain("await releaseBoardMaintainerCreation(c.env.DB, ownerId, boardId, maintainerId)");
+    expect(createRoute).toContain("throw error");
   });
 
   it("returns an existing active task before creation and after a unique-index race", () => {

@@ -4,11 +4,10 @@ import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import { parseUserOutput } from "better-auth/db";
-import { admin, bearer, genericOAuth, username } from "better-auth/plugins";
+import { admin, bearer, username } from "better-auth/plugins";
 import { Kysely } from "kysely";
 import { D1Dialect } from "kysely-d1";
 import * as z from "zod";
-import type { D1 } from "./db";
 import type { AppServices } from "./types";
 import {
   bootstrapCreateAdmin,
@@ -23,63 +22,6 @@ import {
   USERNAME_REGEX,
   usernameValidationMessage,
 } from "./usernameAuth";
-
-// AMA can only be unlinked once the user has no AMA-backed resources left:
-// latest worker agents that actually have a backing AMA agent, or machines.
-// Leaders, builtin agents, old snapshots, and pre-AMA rows still missing an
-// ama_agent_id are AK-only records and must not block disconnect.
-export async function hasAmaResources(db: D1, ownerId: string): Promise<boolean> {
-  const agent = await db
-    .prepare(
-      "SELECT 1 FROM agents WHERE owner_id = ? AND builtin = 0 AND kind = 'worker' AND version = 'latest' AND ama_agent_id IS NOT NULL LIMIT 1",
-    )
-    .bind(ownerId)
-    .first();
-  if (agent) return true;
-  const machine = await db.prepare("SELECT 1 FROM machines WHERE owner_id = ? LIMIT 1").bind(ownerId).first();
-  return Boolean(machine);
-}
-
-// Registers AMA as a generic OIDC provider so each AK user can link their own
-// AMA account. Only added when AMA OIDC is configured; standalone AK skips it.
-function amaProviderPlugins(env: AppServices): BetterAuthPlugin[] {
-  const issuer = env.AMA_OIDC_ISSUER;
-  if (!issuer || !env.AMA_OIDC_CLIENT_ID || !env.AMA_OIDC_CLIENT_SECRET) return [];
-  const resource = amaOidcResource(env);
-  return [
-    genericOAuth({
-      config: [
-        {
-          providerId: "ama",
-          discoveryUrl: oidcDiscoveryUrl(issuer),
-          clientId: env.AMA_OIDC_CLIENT_ID,
-          clientSecret: env.AMA_OIDC_CLIENT_SECRET,
-          authentication: "basic",
-          scopes: amaOidcScopes(env),
-          pkce: true,
-          ...(resource ? { authorizationUrlParams: { resource }, tokenUrlParams: { resource } } : {}),
-        },
-      ],
-    }),
-  ];
-}
-
-export function oidcDiscoveryUrl(issuer: string): string {
-  return `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`;
-}
-
-function amaOidcScopes(env: AppServices): string[] {
-  return (
-    env.AMA_OIDC_SCOPES?.trim()
-      .split(/[\s,]+/)
-      .filter(Boolean) ?? ["openid", "profile", "email", "offline_access"]
-  );
-}
-
-export function amaOidcResource(env: Pick<AppServices, "AMA_ORIGIN">): string | null {
-  const origin = env.AMA_ORIGIN?.trim().replace(/\/+$/, "");
-  return origin || null;
-}
 
 // ─── Username bootstrap plugin ───────────────────────────────────────────────
 // First-run registration, legacy email compatibility login, and username
@@ -369,7 +311,6 @@ export function createAuth(env: AppServices) {
         usernameValidator: (u) => USERNAME_REGEX.test(u),
       }),
       usernameBootstrapPlugin(env),
-      ...amaProviderPlugins(env),
     ],
   });
 }
