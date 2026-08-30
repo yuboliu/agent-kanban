@@ -309,6 +309,12 @@ export abstract class ApiClient {
   failMaintainerRun(boardId: string, maintainerId: string, runId: string, error: string) {
     return this.request<any>("PATCH", `/api/boards/${boardId}/maintainers/${maintainerId}/runs/${runId}/fail`, { error });
   }
+  listMaintainerMemories(boardId: string, maintainerId: string) {
+    return this.request<any>("GET", `/api/boards/${boardId}/maintainers/${maintainerId}/memories`);
+  }
+  putMaintainerMemory(boardId: string, maintainerId: string, input: { path: string; content: string; expected_revision?: number | null }) {
+    return this.request<any>("PUT", `/api/boards/${boardId}/maintainers/${maintainerId}/memories`, input);
+  }
   deleteBoardMaintainer(boardId: string, maintainerId: string) {
     return this.request<any>("DELETE", `/api/boards/${boardId}/maintainers/${maintainerId}`);
   }

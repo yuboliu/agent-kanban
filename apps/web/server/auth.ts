@@ -70,6 +70,8 @@ const ROUTE_RULES: { method: string; pattern: RegExp; rule: RouteRule }[] = [
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/local-runs$/, rule: { allow: ["machine"] } },
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs$/, rule: { allow: ["machine"] } },
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/claim$/, rule: { allow: ["machine"] } },
+  { method: "PUT", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/memories$/, rule: { allow: ["machine"] } },
+  { method: "GET", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/memories$/, rule: { allow: ["user", "machine"] } },
   { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/lease$/, rule: { allow: ["machine"] } },
   { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/complete$/, rule: { allow: ["machine"] } },
   { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/fail$/, rule: { allow: ["machine"] } },

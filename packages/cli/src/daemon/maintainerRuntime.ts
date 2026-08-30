@@ -8,9 +8,9 @@
  * one claimed run at a time and renews the lease while the provider runs.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { MachineClient } from "../client/machine.js";
 import { createLogger } from "../logger.js";
 import { getProvider, normalizeRuntime } from "../providers/registry.js";
@@ -34,6 +34,12 @@ interface LocalMaintainer {
   runtime?: string;
   model?: string | null;
   prompt?: string;
+}
+
+interface MaintainerMemory {
+  path: string;
+  content: string;
+  revision: number;
 }
 
 interface MaintainerRuntimeOptions {
@@ -143,6 +149,9 @@ export class LocalMaintainerRuntime {
         throw new Error("ak-maintainer skill materialization failed");
       }
 
+      // Persistent memory: hydrate prior files into the scratch workspace.
+      const memories = await this.loadMemories(boardId, maintainer.id, cwd);
+
       const env: Record<string, string> = {
         ...process.env,
         AK_BOARD_ID: boardId,
@@ -168,8 +177,45 @@ export class LocalMaintainerRuntime {
           throw new Error(`Maintainer run exceeded ${Math.round(this.maxRunDurationMs / 60_000)} minutes`);
         }
       }
+
+      await this.syncMemories(boardId, maintainer.id, cwd, memories);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  private async loadMemories(boardId: string, maintainerId: string, cwd: string): Promise<MaintainerMemory[]> {
+    try {
+      const result = (await this.client.listMaintainerMemories(boardId, maintainerId)) as { data?: MaintainerMemory[] };
+      const memories = result.data ?? [];
+      for (const memory of memories) {
+        const filePath = join(cwd, memory.path);
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, memory.content, "utf8");
+      }
+      return memories;
+    } catch (error) {
+      this.logger.warn(`Failed to hydrate maintainer memory: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  private async syncMemories(boardId: string, maintainerId: string, cwd: string, memories: MaintainerMemory[]): Promise<void> {
+    for (const memory of memories) {
+      const filePath = join(cwd, memory.path);
+      if (!existsSync(filePath)) continue;
+      try {
+        const content = readFileSync(filePath, "utf8");
+        if (content === memory.content) continue; // unchanged
+        await this.client.putMaintainerMemory(boardId, maintainerId, {
+          path: memory.path,
+          content,
+          expected_revision: memory.revision,
+        });
+        this.logger.info(`Maintainer memory updated: ${memory.path}`);
+      } catch (error) {
+        this.logger.warn(`Failed to sync maintainer memory ${memory.path}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

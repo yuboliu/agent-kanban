@@ -121,6 +121,7 @@ import {
   listMaintainerMemories,
   listMaintainerRuns,
   listMaintainerSessions,
+  putMaintainerMemory,
   renewMaintainerRunLease,
 } from "./maintainerRuntimeRepo";
 import { createMessage, listMessages } from "./messageRepo";
@@ -2191,6 +2192,31 @@ api.get("/api/boards/:id/maintainers/:maintainerId/memories", async (c) => {
   return c.json({ data: memories });
 });
 
+api.put("/api/boards/:id/maintainers/:maintainerId/memories", async (c) => {
+  requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const body = (await c.req.json<{ path?: string; content?: string; expected_revision?: number | null }>().catch(() => null)) ?? {};
+  if (!body.path || typeof body.content !== "string") {
+    throw new HTTPException(400, { message: "path and content are required" });
+  }
+  validateMaintainerMemoryPath(body.path);
+  const hash = await hashMaintainerMemoryContent(body.content);
+  const memory = await putMaintainerMemory(
+    c.env.DB,
+    ownerId,
+    boardId,
+    maintainer.id,
+    body.path,
+    body.content,
+    hash,
+    typeof body.expected_revision === "number" ? body.expected_revision : null,
+  );
+  return c.json(memory ? { memory } : { memory: null });
+});
+
 // ─── Machine-only maintainer run control (stage 4) ─────────────────────────────
 // The local daemon claims a queued run, renews its lease, and completes/fails it.
 // Single-turn serialization per maintainer happens atomically in claim.
@@ -2200,6 +2226,23 @@ function requireMachineMaintainerContext(c: { get: (key: string) => any }) {
   const machineId = c.get("machineId");
   if (!machineId) throw new HTTPException(403, { message: "Machine context required" });
   return machineId as string;
+}
+
+const MAINTAINER_MEMORY_MAX_BYTES = 1024 * 1024;
+
+function validateMaintainerMemoryPath(path: string): void {
+  if (path.length === 0 || path.length > 512 || path.startsWith("/") || path.includes("..") || path === ".ama" || path.startsWith(".ama/")) {
+    throw new HTTPException(400, { message: "Invalid memory path" });
+  }
+}
+
+async function hashMaintainerMemoryContent(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > MAINTAINER_MEMORY_MAX_BYTES) {
+    throw new HTTPException(413, { message: "Memory file exceeds 1 MiB" });
+  }
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 api.post("/api/boards/:id/maintainers/:maintainerId/runs", async (c) => {
