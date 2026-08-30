@@ -20,7 +20,6 @@ import {
 } from "./githubInstallations";
 import { createLogger } from "./logger";
 import { ensureMaintainerHttpTriggerSerial } from "./maintainerTriggerConcurrency";
-import { releaseTaskRuntimeBinding } from "./taskDispatch";
 import { cancelTask, completeTask, getTask } from "./taskRepo";
 import type { AppServices } from "./types";
 
@@ -83,11 +82,9 @@ export async function handleGithubPullRequestEvent(
         logger.warn(`PR merged for task ${row.id} while ${row.status}; skipping`);
         continue;
       }
-      await releaseTaskRuntimeBinding(db, env, row.owner_id, fresh);
       const task = await completeTask(db, row.id, "machine", "github", "machine");
       if (!task) continue;
     } else {
-      await releaseTaskRuntimeBinding(db, env, row.owner_id, fresh);
       const task = await cancelTask(db, row.id, "machine", "github", "machine");
       if (!task) continue;
     }

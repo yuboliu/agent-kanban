@@ -1,7 +1,6 @@
 import { STALE_TIMEOUT_MS } from "@agent-kanban/shared";
 import type { D1 } from "./db";
-import { releaseTaskRuntimeBinding } from "./taskDispatch";
-import { getTask, releaseTask } from "./taskRepo";
+import { releaseTask } from "./taskRepo";
 import type { AppServices } from "./types";
 
 export async function detectAndReleaseStale(db: D1, boardId: string): Promise<void> {
@@ -31,7 +30,7 @@ export async function detectAndReleaseStale(db: D1, boardId: string): Promise<vo
 // safely batch). Under a long cron outage this degrades to a serialized
 // chain, but the stale timeout (24h) means such volumes are rare and the
 // cron will make steady progress on subsequent ticks either way.
-export async function detectAndReleaseStaleAll(db: D1, env: AppServices): Promise<void> {
+export async function detectAndReleaseStaleAll(db: D1, _env: AppServices): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_TIMEOUT_MS).toISOString();
 
   const staleTasks = await db
@@ -47,10 +46,8 @@ export async function detectAndReleaseStaleAll(db: D1, env: AppServices): Promis
     .all<{ id: string; owner_id: string }>();
 
   for (const stale of staleTasks.results) {
-    // Stop the wedged runtime session before releasing, so it doesn't keep
-    // burning quota against a task that is no longer running it.
-    const task = await getTask(db, stale.id, stale.owner_id);
-    if (task) await releaseTaskRuntimeBinding(db, env, stale.owner_id, task, "timeout");
+    // Local-only: there is no remote runtime binding to tear down; the daemon
+    // observes the release through polling and stops the agent session.
     await releaseTask(db, stale.id, "machine", "system", "machine", "timed_out");
   }
 }

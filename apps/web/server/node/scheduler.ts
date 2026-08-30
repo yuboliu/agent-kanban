@@ -1,8 +1,6 @@
 import { createLogger } from "../logger";
 import { detectStaleMachines } from "../machineRepo";
 import { backfillMaintainerHttpTriggerConcurrency } from "../maintainerTriggerConcurrency";
-import { routePendingTasks } from "../runtimeCoordinator";
-import { dispatchPendingAmaTasks, reconcileAmaBoundTasks, releaseStaleDispatchClaims } from "../taskDispatch";
 import { detectAndReleaseStaleAll } from "../taskStale";
 import type { AppServices } from "../types";
 
@@ -26,13 +24,9 @@ export function startScheduler(services: AppServices, options?: { intervalMs?: n
       await backfillMaintainerHttpTriggerConcurrency(services.DB, services).catch((err) =>
         logger.warn(`backfillMaintainerHttpTriggerConcurrency failed: ${err}`),
       );
-      // Task sweeps run sequentially: stale and reconcile sweeps both tear
-      // down runtime bindings and must not race each other on the same task.
+      // Local-only: task dispatch happens on the daemon side via polling; the
+      // server only releases tasks whose sessions went stale.
       await detectAndReleaseStaleAll(services.DB, services).catch((err) => logger.warn(`detectAndReleaseStaleAll failed: ${err}`));
-      await reconcileAmaBoundTasks(services.DB, services).catch((err) => logger.warn(`reconcileAmaBoundTasks failed: ${err}`));
-      await releaseStaleDispatchClaims(services.DB, services).catch((err) => logger.warn(`releaseStaleDispatchClaims failed: ${err}`));
-      await routePendingTasks(services.DB, services).catch((err) => logger.warn(`routePendingTasks failed: ${err}`));
-      await dispatchPendingAmaTasks(services.DB, services).catch((err) => logger.warn(`dispatchPendingAmaTasks failed: ${err}`));
     } finally {
       running = false;
     }

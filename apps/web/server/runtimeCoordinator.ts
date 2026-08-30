@@ -1,15 +1,10 @@
-import { AGENT_RUNTIMES, type AgentRuntime, hasNoScheduleTaint, type Task } from "@agent-kanban/shared";
+import { type AgentRuntime, hasNoScheduleTaint, type Task } from "@agent-kanban/shared";
 import { HTTPException } from "hono/http-exception";
 import { getAgent } from "./agentRepo";
 import type { D1 } from "./db";
-import { createLogger } from "./logger";
-import { type TaskRuntimeSource, taskRuntimeSource } from "./runtimeBinding";
-import { compareAndSetTaskRuntimeSource, listPendingTaskRuntimeBindings, persistInferredAmaTaskRuntimeSource } from "./runtimeBindingRepo";
-import { resolveRuntimeSourceAvailability, selectRuntimeSource } from "./runtimeRouter";
-import { dispatchTaskToAma, releaseTaskRuntimeBinding } from "./taskDispatch";
+import type { TaskRuntimeSource } from "./runtimeBinding";
+import { resolveRuntimeSourceAvailability } from "./runtimeRouter";
 import type { AppServices } from "./types";
-
-const logger = createLogger("runtimeCoordinator");
 
 interface DispatchOptions {
   apiOrigin: string;
@@ -32,62 +27,29 @@ export async function resolveAssignableWorkerRuntimeSource(
   }
 
   const runtime = agent.runtime as AgentRuntime;
-  // Relay agents terminate the model at the relay — the machine model catalog
-  // is irrelevant, so bypass the runner model gate.
-  const source = selectRuntimeSource(await resolveRuntimeSourceAvailability(db, env, ownerId, runtime, agent.relay_id ? null : agent.model));
-  if (!source) {
+  const availability = await resolveRuntimeSourceAvailability(db, env, ownerId, runtime);
+  if (!availability.legacy) {
     throw new HTTPException(409, {
-      message: `Runtime "${runtime}" is not available on any AMA runner or online local machine.`,
+      message: `Runtime "${runtime}" is not available on any online local machine.`,
     });
   }
-  return source;
+  return "legacy";
 }
 
-export async function dispatchAssignedTask(db: D1, env: AppServices, ownerId: string, task: Task, options: DispatchOptions): Promise<Task> {
-  if (taskRuntimeSource(task) !== "ama") return task;
-  return await dispatchTaskToAma(db, env, ownerId, task, options);
+export async function dispatchAssignedTask(db: D1, _env: AppServices, _ownerId: string, task: Task, _options: DispatchOptions): Promise<Task> {
+  // Local-only: machine daemons poll todo tasks themselves; there is no
+  // server-side runtime dispatch.
+  return task;
 }
 
 export async function releaseAssignedTaskRuntime(
-  db: D1,
-  env: AppServices,
-  ownerId: string,
+  _db: D1,
+  _env: AppServices,
+  _ownerId: string,
   task: Task,
-  reason: "user_requested" | "timeout" | "policy" | "runtime_error" = "user_requested",
+  _reason: "user_requested" | "timeout" | "policy" | "runtime_error" = "user_requested",
 ): Promise<Task> {
-  if (taskRuntimeSource(task) === "legacy") return task;
-  return await releaseTaskRuntimeBinding(db, env, ownerId, task, reason);
-}
-
-export async function routePendingTasks(db: D1, env: AppServices): Promise<void> {
-  const availabilityByRuntime = new Map<string, Awaited<ReturnType<typeof resolveRuntimeSourceAvailability>>>();
-  for (const row of await listPendingTaskRuntimeBindings(db)) {
-    if (!AGENT_RUNTIMES.includes(row.runtime as AgentRuntime)) continue;
-    if (row.hasAmaBinding) {
-      if (!row.current) await persistInferredAmaTaskRuntimeSource(db, row.id, row.assignedTo);
-      continue;
-    }
-
-    const runtime = row.runtime as AgentRuntime;
-    // Relay agents bypass the runner model gate (the relay owns the model).
-    const model = row.relayId ? null : row.model;
-    const cacheKey = JSON.stringify([row.ownerId, runtime, model]);
-    let availability = availabilityByRuntime.get(cacheKey);
-    if (!availability) {
-      availability = await resolveRuntimeSourceAvailability(db, env, row.ownerId, runtime, model);
-      availabilityByRuntime.set(cacheKey, availability);
-    }
-
-    let next = row.current;
-    if (!row.current) {
-      next = selectRuntimeSource(availability);
-    } else if (row.current === "legacy" && !availability.legacy && availability.ama) {
-      next = "ama";
-    } else if (row.current === "ama" && !availability.ama && availability.legacy) {
-      next = "legacy";
-    }
-    if (!next || next === row.current) continue;
-    if (!(await compareAndSetTaskRuntimeSource(db, row.id, row.assignedTo, row.current, next))) continue;
-    logger.info(`task runtime source selected task=${row.id} runtime=${runtime} previous=${row.current ?? "unrouted"} next=${next}`);
-  }
+  // Local-only: there is no remote runtime binding to tear down; the daemon
+  // observes status changes through polling.
+  return task;
 }

@@ -1,6 +1,5 @@
 import { AGENT_RUNTIMES, type AgentRuntime, MACHINE_STALE_TIMEOUT_MS } from "@agent-kanban/shared";
-import { getAmaProjectId } from "./amaOwnerIntegrationRepo";
-import { type AmaRunner, isAmaTaskDispatchConfigured, listAmaRunners } from "./amaRuntime";
+import type { AmaRunner } from "./amaRuntime";
 import type { D1 } from "./db";
 import { legacyRuntimeAvailableOnMachines } from "./legacyRuntime";
 import { listMachinesForRuntimeRouting } from "./machineRepo";
@@ -48,55 +47,23 @@ function runtimeQuotaExhausted(runner: AmaRunner, runtime: string): boolean {
 
 export async function resolveRuntimeSourceAvailability(
   db: D1,
-  env: AppServices,
+  _env: AppServices,
   ownerId: string,
   runtime: AgentRuntime,
-  model: string | null = null,
+  _model: string | null = null,
 ): Promise<RuntimeSourceAvailability> {
+  // Local-only: task assignment accepts nothing but an online local machine
+  // running the runtime. AMA runners and cloud sandboxes no longer exist.
   const machines = await listMachinesForRuntimeRouting(db, ownerId);
-  const legacy = legacyRuntimeAvailableOnMachines(machines, runtime);
-  if (!isAmaTaskDispatchConfigured(env)) {
-    return { ama: false, legacy };
-  }
-
-  const environmentIds = [
-    ...new Set(
-      machines
-        .filter((machine) => machine.runtimes.some((entry) => entry.name === runtime))
-        .map((machine) => machine.ama_environment_id)
-        .filter((environmentId): environmentId is string => Boolean(environmentId)),
-    ),
-  ];
-  const projectId = environmentIds.length > 0 ? await getAmaProjectId(db, ownerId) : null;
-  const runnerPages = projectId
-    ? await Promise.all(environmentIds.map((environmentId) => listAmaRunners(env, ownerId, projectId, environmentId)))
-    : [];
-  const amaRuntime = amaRuntimeName(runtime);
-  const cloudAvailable = machines.some(
-    (machine) => machine.hosting === "cloud" && machine.runtimes.some((entry) => entry.name === runtime && entry.status === "ready"),
-  );
-  const ama = cloudAvailable || runnerPages.some((page) => page.data.some((runner) => amaRunnerOwnsRuntime(runner, amaRuntime, model)));
-  return { ama, legacy };
+  return { ama: false, legacy: legacyRuntimeAvailableOnMachines(machines, runtime) };
 }
 
-export async function listAvailableRuntimeSources(db: D1, env: AppServices, ownerId: string): Promise<Map<AgentRuntime, RuntimeSourceAvailability>> {
+export async function listAvailableRuntimeSources(db: D1, _env: AppServices, ownerId: string): Promise<Map<AgentRuntime, RuntimeSourceAvailability>> {
   const machines = await listMachinesForRuntimeRouting(db, ownerId);
-  const projectId = isAmaTaskDispatchConfigured(env) ? await getAmaProjectId(db, ownerId) : null;
-  const environmentIds = [...new Set(machines.map((machine) => machine.ama_environment_id).filter((id): id is string => Boolean(id)))];
-  const runnerPages = projectId
-    ? await Promise.all(environmentIds.map((environmentId) => listAmaRunners(env, ownerId, projectId, environmentId)))
-    : [];
-  const entries = await Promise.all(
-    AGENT_RUNTIMES.map(async (runtime) => {
-      const amaRuntime = amaRuntimeName(runtime);
-      const cloudAvailable = machines.some(
-        (machine) => machine.hosting === "cloud" && machine.runtimes.some((entry) => entry.name === runtime && entry.status === "ready"),
-      );
-      const ama = cloudAvailable || runnerPages.some((page) => page.data.some((runner) => amaRunnerCanScheduleRuntime(runner, amaRuntime)));
-      const legacy = legacyRuntimeAvailableOnMachines(machines, runtime);
-      return [runtime, { ama, legacy }] as const;
-    }),
-  );
+  const entries = AGENT_RUNTIMES.map((runtime) => {
+    const legacy = legacyRuntimeAvailableOnMachines(machines, runtime);
+    return [runtime, { ama: false, legacy }] as const;
+  });
   return new Map(entries);
 }
 

@@ -4,8 +4,6 @@ import { createLogger } from "../server/logger";
 import { detectStaleMachines } from "../server/machineRepo";
 import { backfillMaintainerHttpTriggerConcurrency } from "../server/maintainerTriggerConcurrency";
 import { createApi } from "../server/routes";
-import { routePendingTasks } from "../server/runtimeCoordinator";
-import { dispatchPendingAmaTasks, reconcileAmaBoundTasks, releaseStaleDispatchClaims } from "../server/taskDispatch";
 import { detectAndReleaseStaleAll } from "../server/taskStale";
 import type { AppServices, Env, RelayId } from "../server/types";
 
@@ -46,19 +44,9 @@ export default {
         backfillMaintainerHttpTriggerConcurrency(services.DB, services).catch((err) =>
           logger.warn(`backfillMaintainerHttpTriggerConcurrency failed: ${err}`),
         ),
-        // Task sweeps run sequentially: stale and reconcile sweeps both tear
-        // down runtime bindings and must not race each other on the same
-        // task, and dispatch last picks up everything they released.
-        detectAndReleaseStaleAll(services.DB, services)
-          .catch((err) => logger.warn(`detectAndReleaseStaleAll failed: ${err}`))
-          .then(() => reconcileAmaBoundTasks(services.DB, services))
-          .catch((err) => logger.warn(`reconcileAmaBoundTasks failed: ${err}`))
-          .then(() => releaseStaleDispatchClaims(services.DB, services))
-          .catch((err) => logger.warn(`releaseStaleDispatchClaims failed: ${err}`))
-          .then(() => routePendingTasks(services.DB, services))
-          .catch((err) => logger.warn(`routePendingTasks failed: ${err}`))
-          .then(() => dispatchPendingAmaTasks(services.DB, services))
-          .catch((err) => logger.warn(`dispatchPendingAmaTasks failed: ${err}`)),
+        // Local-only: task dispatch happens on the daemon side via polling;
+        // the server only releases tasks whose sessions went stale.
+        detectAndReleaseStaleAll(services.DB, services).catch((err) => logger.warn(`detectAndReleaseStaleAll failed: ${err}`)),
       ]),
     );
   },
