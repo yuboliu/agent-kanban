@@ -11,7 +11,7 @@
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
 | 2 | 纯 Node 运行时 | ✅ 已交付(commit `25354e1` + `58b10a2` + `78e4475`) |
 | 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
-| 4 | Local Maintainer 完整替代 | 🔶 主要功能已交付(`5806179`+`503c24f`+`1bfa1d8`),事件轮询兜底/memory 回写待续 |
+| 4 | Local Maintainer 完整替代 | ✅ 核心已交付(`5806179`+`503c24f`+`1bfa1d8`+`b3214c2`),仅事件轮询兜底待续 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
 | 6 | 可选 GitHub App | ✅ 已交付(commit `b34d7b8`) |
 | 7 | 导入旧 Wrangler/D1 数据 | ✅ 已交付(commit `753cb7f`) |
@@ -122,16 +122,20 @@
     忽略无关 action;通过 `listGithubEventMaintainersForRepository`(github_events_enabled)
     匹配维护者;机器 enqueue 端点 `POST .../runs`。
   - run 完成时按 routing_key 自动复用/更新 maintainer_sessions(上下文延续)。
-  - 测试:CLI maintainer-runtime(4)、scheduler(7)、github-events(4)。
+  - 测试:CLI maintainer-runtime(5)、scheduler(7)、github-events(4)。
+- `b3214c2` memory 持久化闭环:
+  - 服务端 PUT `.../memories`(机器专用):路径安全校验(拒绝绝对/`..`/`.ama`)、1 MiB
+    限制、服务端 SHA-256、revision 条件写入(冲突返回 null);GET 允许 user+machine。
+  - CLI 执行器:运行前 `listMaintainerMemories` 水合到 scratch workspace,运行后扫描
+    变更文件按 `expected_revision` 回写(未变化跳过,冲突记录日志不覆盖)。
+  - 测试:memory 水合+回写(带 revision 断言)。
 
-**剩余(事件轮询兜底,计划 3.4)**:
+**剩余(事件轮询兜底,计划 3.4,唯一)**:
 1. **`maintainer_event_cursors` 轮询**:无公网 webhook 时,daemon 用 GitHub
    Repository Events API + ETag 增量补齐 issue/PR 事件(首次只建基线);同一事件
-   webhook 与轮询跨通道去重(幂等键已含 node_id)。
-2. **memory 回写**:首版执行器只写 CONTEXT.md,未做 HEARTBEAT.md 回写与
-   maintainer_memories revision 上传(需要机器写 memory 端点);当前内存持久化靠
-   provider 工作区,跨机器不延续。
-3. **skill 完整打包**:ak-maintainer 的 references/ 目录与每日 24h 刷新机制沿用
-   现有 skill 缓存(prepareSkillSnapshots 已带 last-known-good),未单独做发布物打包。
+   webhook 与轮询跨通道去重(幂等键已含 node_id;表 maintainer_event_cursors 已在
+   迁移 0049 建好,repo 读写未实现)。
+2. **skill 完整打包**:ak-maintainer 的 references/ 目录与每日 24h 刷新沿用现有
+   skill 缓存(prepareSkillSnapshots 已带 last-known-good),未单独做发布物打包。
 
-测试基线:服务端 2435+、CLI 1018、全量约 2450 通过。
+测试基线:全量约 2445 通过(服务端 + CLI + 前端)。
