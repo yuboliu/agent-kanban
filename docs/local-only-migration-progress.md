@@ -11,7 +11,7 @@
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
 | 2 | 纯 Node 运行时 | ✅ 已交付(commit `25354e1` + `58b10a2` + `78e4475`) |
 | 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
-| 4 | Local Maintainer 完整替代 | ⏳ 未开始 |
+| 4 | Local Maintainer 完整替代 | 🔶 服务端+UI 已交付(commit `5806179`+`503c24f`),CLI 执行面/事件/skill 待续 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
 | 6 | 可选 GitHub App | ✅ 已交付(commit `b34d7b8`) |
 | 7 | 导入旧 Wrangler/D1 数据 | ✅ 已交付(commit `753cb7f`) |
@@ -97,9 +97,38 @@
 
 阶段 2/3/6/7/8 全部完成,纯本地运行时已是唯一部署方式
 (`pnpm dev` = Node API 8787 + Vite 6265 proxy;`service_runner.sh` 单进程生产;
-数据迁移 `pnpm local:migrate --from-wrangler`)。剩余唯一阶段:
-**阶段 4(Local Maintainer 完整替代)**,计划见 `plans/local-maintainer-ama-parity.md`
-(内置租户级 Agent、maintainer_runs/sessions/memories/event_cursors 表、GitHub 事件
-webhook+轮询、skill 本地化与每日更新、执行管线提取)。复用基础:CLI
-`LocalMaintainerScheduler`、`POST .../local-runs` 幂等端点、`daemon/dispatcher.ts`
-执行管线。建议起点:数据模型+API 先行或内置 Local Maintainer Agent 先行。
+数据迁移 `pnpm local:migrate --from-wrangler`)。
+
+### 阶段 4 当前进度(🔶 进行中)
+
+**已交付(2026-08-30)**:
+- `5806179` 服务端核心:
+  - 迁移 `0049_local_maintainer_runtime.sql`:board_maintainers 加 `runtime`/`model`/
+    `github_events_enabled`;新表 maintainer_runs/sessions/memories/event_cursors。
+  - `maintainerAgent.ts`:租户级内置 Local Maintainer Agent(username
+    `ak-local-maintainer-<suffix>`,builtin=1 + NoSchedule taint,不可编辑/删除)。
+  - `maintainerRuntimeRepo.ts`:run 原子领取/串行/租约/完成/失败/幂等入队/supersede;
+    session 按 routing_key 复用;memory 带 revision 条件写入。
+  - 服务端 API:create/PATCH 支持 runtime/model/github_events_enabled(agent_id 兼容
+    忽略,恒绑定内置 agent);GET runs/sessions/memories;机器专用
+    `POST runs/claim`、`PATCH runs/:id/lease|complete|fail`。
+- `503c24f` UI:BoardMaintainerDialog 去 agent 选择,改 runtime/model/GitHub 事件开关;
+  MaintainerDetailPage 加 Runtime/GitHub events 指标与 Sessions tab,Activity 改读本地
+  runs(trigger/routing_key/machine/status/error),移除 Variables 面板。
+
+**剩余(CLI 执行面 + 事件 + skill,计划 3.3-3.4)**:
+1. **CLI 执行管线**:把 `daemon/dispatcher.ts` 的 provider 启动/临时 Ed25519 session
+   身份/隔离 HOME/runtime 配置/skill snapshot/限流提取为可复用执行管线,新增
+   `LocalMaintainerRuntime`(不调 task claim/complete/reject):领取 run → 物化
+   ak-maintainer skill + memory → 注入 AK_BOARD_ID/AK_MAINTAINER_ID/AK_MAINTAINER_RUN_ID
+   → 启动 provider → 完成/失败 + memory revision 回写。Session 本地存储加
+   `type: "maintainer"`。
+2. **Scheduler 切换**:`LocalMaintainerScheduler` 从 local-runs 任务卡改为主管道:心跳/
+   review 入队 maintainer_runs + 执行器消费(仍保留旧 local-runs 端点兼容)。
+3. **GitHub 事件**:webhook 规范化/去重 + `maintainer_event_cursors` 轮询兜底
+   (Repository Events API + ETag);issue/PR 会话复用与关闭。
+4. **Skill 本地化**:完整打包 `skills/ak-maintainer/`(SKILL.md + references),每日更新
+   + 快照固定 + last-known-good。
+
+测试:服务端已覆盖(run 原子领取/串行/租约、sessions 复用、memory revision、UI)。
+CLI 执行面测试待做(计划用 fake provider 验证心跳写 memory、GitHub 事件入独立 run)。
