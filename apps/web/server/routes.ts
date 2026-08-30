@@ -400,39 +400,15 @@ function _maintainerScheduledStatus(status: "active" | "paused", heartbeatEnable
   return status === "active" && heartbeatEnabled ? "active" : "paused";
 }
 
-function publicBoardMaintainer(
-  maintainer: BoardMaintainer,
-): Omit<
-  BoardMaintainer,
-  | "ama_schedule_id"
-  | "ama_http_trigger_id"
-  | "ama_http_trigger_serialized"
-  | "ama_http_trigger_serialization_attempted_at"
-  | "ama_memory_store_id"
-  | "ama_board_vault_id"
-  | "last_ama_session_id"
-  | "prompt"
-  | "api_key_id"
-> & { scheduler_type: "local" } {
-  const {
-    ama_schedule_id: _scheduleId,
-    ama_http_trigger_id: _httpTriggerId,
-    ama_http_trigger_serialized: _httpTriggerSerialized,
-    ama_http_trigger_serialization_attempted_at: _httpTriggerSerializationAttemptedAt,
-    ama_memory_store_id: _memoryStoreId,
-    ama_board_vault_id: _boardVaultId,
-    last_ama_session_id: _lastAmaSessionId,
-    prompt: _prompt,
-    api_key_id: _apiKeyId,
-    ...publicMaintainer
-  } = maintainer;
+function publicBoardMaintainer(maintainer: BoardMaintainer): Omit<BoardMaintainer, "prompt" | "api_key_id"> & { scheduler_type: "local" } {
+  const { prompt: _prompt, api_key_id: _apiKeyId, ...publicMaintainer } = maintainer;
   return {
     ...publicMaintainer,
     scheduler_type: "local" as const,
   };
 }
 
-async function listPublicMaintainersWithAmaStatus(_db: D1, _env: AppServices, _ownerId: string, maintainers: BoardMaintainer[]) {
+async function listPublicMaintainers(_db: D1, _env: AppServices, _ownerId: string, maintainers: BoardMaintainer[]) {
   return maintainers.map(publicBoardMaintainer);
 }
 
@@ -509,9 +485,8 @@ function _publicMaintainerMemory(memory: {
   };
 }
 
-function publicMachine<T extends MachineRecord | MachineWithAgentsRecord>(machine: T): Omit<T, "ama_environment_id"> {
-  const { ama_environment_id: _environmentId, ...publicMachine } = machine;
-  return publicMachine;
+function publicMachine<T extends MachineRecord | MachineWithAgentsRecord>(machine: T): T {
+  return machine;
 }
 
 function machineWithLegacyRuntimeStatus<T extends MachineRecord | MachineWithAgentsRecord>(machine: T): T {
@@ -1948,11 +1923,6 @@ api.post("/api/boards/:id/maintainers", async (c) => {
       id: maintainerId,
       boardId,
       agentId: maintainerAgent.id,
-      // NOT NULL placeholder; the "local:" prefix is self-describing.
-      amaScheduleId: `local:${maintainerId}`,
-      amaHttpTriggerId: null,
-      amaHttpTriggerSerialized: false,
-      amaMemoryStoreId: null,
       prompt: "",
       intervalSeconds,
       heartbeatEnabled,
@@ -1974,7 +1944,7 @@ api.get("/api/boards/:id/maintainers", async (c) => {
   const board = await getOwnedBoard(c.env.DB, c.get("ownerId"), c.req.param("id"));
   if (!board) throw new HTTPException(404, { message: "Board not found" });
   const maintainers = await listBoardMaintainers(c.env.DB, c.get("ownerId"), c.req.param("id"));
-  return c.json(await listPublicMaintainersWithAmaStatus(c.env.DB, c.env, c.get("ownerId"), maintainers));
+  return c.json(await listPublicMaintainers(c.env.DB, c.env, c.get("ownerId"), maintainers));
 });
 
 api.get("/api/boards/:id/maintainers/:maintainerId", async (c) => {
@@ -1995,7 +1965,6 @@ api.post("/api/boards/:id/maintainers/:maintainerId/local-runs", async (c) => {
   if (!board) throw new HTTPException(404, { message: "Board not found" });
   const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
-  if (!isLocalBoardMaintainer(maintainer)) throw new HTTPException(409, { message: "Only local maintainer runs can be recorded here" });
   if (maintainer.status !== "active") throw new HTTPException(409, { message: "Board maintainer is not active" });
   const body = await c.req.json<{ trigger?: "review" | "heartbeat"; task_ids?: string[] }>();
   if (body.trigger !== "review" && body.trigger !== "heartbeat") {
@@ -2227,12 +2196,6 @@ function _withMaintainerTaint(taints: AgentTaint[] | null | undefined): AgentTai
 
 function withoutMaintainerTaint(taints: AgentTaint[] | null | undefined): AgentTaint[] {
   return (taints ?? []).filter((taint) => !sameTaint(taint, AK_MAINTAINER_TAINT));
-}
-
-// Local maintainers carry a "local:<id>" placeholder schedule id — they have
-// no AMA resources even if AMA gets (re)configured after they were created.
-function isLocalBoardMaintainer(maintainer: BoardMaintainer): boolean {
-  return maintainer.ama_schedule_id.startsWith("local:");
 }
 
 function withMaintainerSkill(skills: string[] | null | undefined): string[] {

@@ -21,19 +21,12 @@ function row(overrides: Record<string, unknown> = {}) {
     owner_id: "owner-1",
     board_id: "board-1",
     agent_id: "agent-1",
-    ama_schedule_id: "local:maintainer-1",
-    ama_http_trigger_id: null,
-    ama_http_trigger_serialized: 0,
-    ama_http_trigger_serialization_attempted_at: null,
-    ama_memory_store_id: null,
-    ama_board_vault_id: null,
     prompt: "",
     interval_seconds: 3600,
     heartbeat_enabled: 1,
     review_enabled: 0,
     status: "active",
     last_run_at: null,
-    last_ama_session_id: null,
     last_error_message: null,
     api_key_id: null,
     created_at: "2026-08-25T00:00:00.000Z",
@@ -169,10 +162,6 @@ describe("boardMaintainerRepo trigger modes", () => {
         id: "old-token",
         boardId: "board-1",
         agentId: "agent-1",
-        amaScheduleId: "local:old-token",
-        amaHttpTriggerId: null,
-        amaHttpTriggerSerialized: false,
-        amaMemoryStoreId: null,
         prompt: "",
         intervalSeconds: 3600,
         heartbeatEnabled: true,
@@ -219,13 +208,13 @@ describe("boardMaintainerRepo trigger modes", () => {
     expect(db.statements[0].args).toEqual([runAt, runAt, "owner-1", "board-1", "maintainer-1"]);
   });
 
-  it("filters GitHub review dispatch to review-enabled AMA maintainers", async () => {
-    const db = fakeDb(row({ ama_http_trigger_id: "http-trigger", review_enabled: 1 }));
+  it("filters GitHub review dispatch to review-enabled maintainers", async () => {
+    const db = fakeDb(row({ review_enabled: 1 }));
 
     await listActiveBoardMaintainersForRepository(db as any, 42, "Acme/Repo");
 
     expect(db.statements[0].sql).toContain("bm.review_enabled = 1");
-    expect(db.statements[0].sql).toContain("bm.ama_http_trigger_id IS NOT NULL");
+    expect(db.statements[0].sql).not.toContain("ama_http_trigger_id");
     expect(db.statements[0].args).toEqual([42, "acme/repo", "acme/repo"]);
   });
 
@@ -268,15 +257,15 @@ describe("maintainer routes trigger contracts", () => {
   it("creates local maintainer rows without any AMA schedule or HTTP trigger", () => {
     expect(createRoute).not.toContain("createAmaScheduledAgentTrigger");
     expect(createRoute).not.toContain("createAmaHttpAgentTrigger");
-    expect(createRoute).toContain("amaScheduleId: `local:${maintainerId}`");
-    expect(createRoute).toContain("amaHttpTriggerId: null");
+    expect(createRoute).not.toContain("amaScheduleId");
+    expect(createRoute).not.toContain("amaHttpTriggerId");
   });
 
   it("creates every maintainer as a local scheduler row regardless of AMA connectivity", () => {
     expect(createRoute).not.toContain("useLocalScheduler");
     expect(createRoute).not.toContain("requireAmaConnected");
     expect(createRoute).not.toContain("Relay-backed maintainers");
-    expect(createRoute).toContain("amaScheduleId: `local:${maintainerId}`");
+    expect(createRoute).not.toContain("amaScheduleId");
   });
 
   it("protects task-scoped runtime configuration as machine-only and never cacheable", () => {
@@ -301,7 +290,6 @@ describe("maintainer routes trigger contracts", () => {
   });
 
   it("validates active trigger configuration and settled review candidates", () => {
-    expect(localRunsRoute).toContain("Only local maintainer runs can be recorded here");
     expect(localRunsRoute).toContain('maintainer.status !== "active"');
     expect(localRunsRoute).toContain("Review-event trigger is disabled");
     expect(localRunsRoute).toContain("Heartbeat trigger is disabled");

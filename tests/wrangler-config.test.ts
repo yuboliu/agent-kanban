@@ -40,9 +40,13 @@ describe("production wrangler configuration", () => {
     );
   });
 
-  it("pins AMA runner 0.7.0 in production and staging", () => {
-    expect(stringValue(tableBody("[vars]"), "AMA_RUNNER_VERSION")).toBe("0.7.0");
-    expect(stringValue(tableBody("[env.staging.vars]"), "AMA_RUNNER_VERSION")).toBe("0.7.0");
+  it("does not expose AMA configuration vars", () => {
+    for (const table of ["[vars]", "[env.staging.vars]"]) {
+      const body = tableBody(table);
+      expect(body).not.toContain("AMA_ORIGIN");
+      expect(body).not.toContain("AMA_OIDC");
+      expect(body).not.toContain("AMA_RUNNER_VERSION");
+    }
   });
 
   it("keeps staging routes explicitly empty", () => {
