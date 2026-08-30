@@ -298,7 +298,21 @@ export async function isActiveMaintainerForBoard(db: D1, ownerId: string, agentI
 }
 
 export async function listActiveBoardMaintainersForRepository(db: D1, installationId: number, fullName: string): Promise<BoardMaintainer[]> {
+  return listMaintainersForRepositoryTrigger(db, installationId, fullName, "review");
+}
+
+export async function listGithubEventMaintainersForRepository(db: D1, installationId: number, fullName: string): Promise<BoardMaintainer[]> {
+  return listMaintainersForRepositoryTrigger(db, installationId, fullName, "github");
+}
+
+async function listMaintainersForRepositoryTrigger(
+  db: D1,
+  installationId: number,
+  fullName: string,
+  trigger: "review" | "github",
+): Promise<BoardMaintainer[]> {
   const canonicalFullName = fullName.toLowerCase();
+  const triggerGuard = trigger === "review" ? "bm.review_enabled = 1" : "bm.github_events_enabled = 1";
   const result = await db
     .prepare(
       `
@@ -310,7 +324,7 @@ export async function listActiveBoardMaintainersForRepository(db: D1, installati
       LEFT JOIN github_installation_repositories gir
         ON gir.installation_id = gi.installation_id AND gir.full_name = ?
       WHERE bm.status = 'active'
-        AND bm.review_enabled = 1
+        AND ${triggerGuard}
         AND replace(replace(lower(r.url), 'https://github.com/', ''), 'http://github.com/', '') = ?
         AND (gi.repository_selection = 'all' OR gir.full_name IS NOT NULL)
       ORDER BY bm.created_at DESC

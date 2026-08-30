@@ -92,6 +92,7 @@ import { addAgentEmail, getGithubToken, removeAgentEmail, syncGpgKey } from "./g
 import {
   handleGithubInstallationEvent,
   handleGithubInstallationRepositoriesEvent,
+  handleGithubMaintainerEvent,
   handleGithubPullRequestEvent,
   verifyGithubSignature,
 } from "./githubWebhook";
@@ -115,6 +116,7 @@ import { ensureLocalMaintainerAgent, isMaintainerAgentProfile } from "./maintain
 import {
   claimNextMaintainerRun,
   completeMaintainerRun,
+  enqueueMaintainerRun,
   failMaintainerRun,
   listMaintainerMemories,
   listMaintainerRuns,
@@ -666,13 +668,18 @@ api.post("/api/webhooks/github-app", async (c) => {
   const payload = JSON.parse(body);
   if (event === "pull_request") {
     const taskSync = await handleGithubPullRequestEvent(c.env.DB, c.env, payload);
-    return c.json({ ok: true, ...taskSync });
+    const maintainerSync = await handleGithubMaintainerEvent(c.env.DB, event, payload);
+    return c.json({ ok: true, ...taskSync, maintainer: maintainerSync });
   }
   if (event === "installation") {
     return c.json({ ok: true, ...(await handleGithubInstallationEvent(c.env.DB, payload)) });
   }
   if (event === "installation_repositories") {
     return c.json({ ok: true, ...(await handleGithubInstallationRepositoriesEvent(c.env.DB, payload)) });
+  }
+  if (event === "issues" || event === "issue_comment" || event === "pull_request_review" || event === "pull_request_review_comment") {
+    const maintainerSync = await handleGithubMaintainerEvent(c.env.DB, event, payload);
+    return c.json({ ok: true, handled: true, maintainer: maintainerSync });
   }
   return c.json({ ok: true, handled: false });
 });
@@ -2194,6 +2201,28 @@ function requireMachineMaintainerContext(c: { get: (key: string) => any }) {
   if (!machineId) throw new HTTPException(403, { message: "Machine context required" });
   return machineId as string;
 }
+
+api.post("/api/boards/:id/maintainers/:maintainerId/runs", async (c) => {
+  requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const body = (await c.req.json<{ trigger?: string; idempotency_key?: string; routing_key?: string }>().catch(() => null)) ?? {};
+  const trigger = body.trigger ?? "";
+  if (trigger !== "heartbeat" && trigger !== "review" && trigger !== "github") {
+    throw new HTTPException(400, { message: "trigger must be heartbeat, review, or github" });
+  }
+  const run = await enqueueMaintainerRun(c.env.DB, {
+    ownerId,
+    boardId,
+    maintainerId: maintainer.id,
+    trigger,
+    idempotencyKey: body.idempotency_key ?? `${trigger}:${newLongId()}`,
+    routingKey: body.routing_key ?? null,
+  });
+  return c.json(run ? { run } : { run: null });
+});
 
 api.post("/api/boards/:id/maintainers/:maintainerId/runs/claim", async (c) => {
   const machineId = requireMachineMaintainerContext(c);

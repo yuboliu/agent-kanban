@@ -288,6 +288,27 @@ export abstract class ApiClient {
   createLocalBoardMaintainerRun(boardId: string, maintainerId: string, input: { trigger: "review" | "heartbeat"; task_ids?: string[] }) {
     return this.request<any>("POST", `/api/boards/${boardId}/maintainers/${maintainerId}/local-runs`, input);
   }
+  enqueueMaintainerRun(
+    boardId: string,
+    maintainerId: string,
+    input: { trigger: "heartbeat" | "review" | "github"; idempotency_key?: string; routing_key?: string },
+  ) {
+    return this.request<any>("POST", `/api/boards/${boardId}/maintainers/${maintainerId}/runs`, input);
+  }
+  claimMaintainerRun(boardId: string, maintainerId: string) {
+    return this.request<any>("POST", `/api/boards/${boardId}/maintainers/${maintainerId}/runs/claim`);
+  }
+  renewMaintainerRunLease(boardId: string, maintainerId: string, runId: string) {
+    return this.request<any>("PATCH", `/api/boards/${boardId}/maintainers/${maintainerId}/runs/${runId}/lease`);
+  }
+  completeMaintainerRun(boardId: string, maintainerId: string, runId: string, sessionId?: string | null) {
+    return this.request<any>("PATCH", `/api/boards/${boardId}/maintainers/${maintainerId}/runs/${runId}/complete`, {
+      session_id: sessionId ?? null,
+    });
+  }
+  failMaintainerRun(boardId: string, maintainerId: string, runId: string, error: string) {
+    return this.request<any>("PATCH", `/api/boards/${boardId}/maintainers/${maintainerId}/runs/${runId}/fail`, { error });
+  }
   deleteBoardMaintainer(boardId: string, maintainerId: string) {
     return this.request<any>("DELETE", `/api/boards/${boardId}/maintainers/${maintainerId}`);
   }

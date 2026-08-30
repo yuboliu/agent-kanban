@@ -10,6 +10,7 @@ function maintainer(overrides: Record<string, unknown> = {}) {
     id: "maintainer-1",
     board_id: "board-1",
     agent_id: "agent-maintainer",
+    runtime: "claude",
     interval_seconds: 3600,
     heartbeat_enabled: true,
     review_enabled: true,
@@ -37,13 +38,18 @@ function task(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function harness(maintainers: unknown[], tasks: unknown[] = []) {
+function harness(maintainers: unknown[], tasks: unknown[] = [], runs: unknown[] = []) {
   const client = {
     listBoards: vi.fn().mockResolvedValue([{ id: "board-1", name: "Test" }]),
     listBoardMaintainers: vi.fn().mockResolvedValue(maintainers),
     listTasks: vi.fn().mockResolvedValue(tasks),
+    listBoardMaintainerRuns: vi.fn().mockResolvedValue({ data: runs }),
     createTask: vi.fn(),
-    createLocalBoardMaintainerRun: vi.fn().mockResolvedValue(task("created-run")),
+    enqueueMaintainerRun: vi.fn().mockResolvedValue({ run: { id: "created-run" } }),
+    claimMaintainerRun: vi.fn().mockResolvedValue({ run: null }),
+    renewMaintainerRunLease: vi.fn().mockResolvedValue({ ok: true }),
+    completeMaintainerRun: vi.fn().mockResolvedValue({ ok: true }),
+    failMaintainerRun: vi.fn().mockResolvedValue({ ok: true }),
   };
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   const scheduler = new LocalMaintainerScheduler(client as any, logger as any, { now: () => NOW, pollIntervalMs: 10 });
@@ -61,11 +67,11 @@ describe("LocalMaintainerScheduler", () => {
     await scheduler.tickOnce();
 
     expect(client.listBoardMaintainers).toHaveBeenCalledTimes(2);
-    expect(client.createLocalBoardMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", { trigger: "heartbeat" });
+    expect(client.enqueueMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", expect.objectContaining({ trigger: "heartbeat" }));
     expect(client.createTask).not.toHaveBeenCalled();
   });
 
-  it("runs review-only mode after the settle window and records the created task", async () => {
+  it("runs review-only mode after the settle window", async () => {
     const reviewCandidate = task("review-me", {
       status: "in_review",
       repository_id: "repo-1",
@@ -76,47 +82,33 @@ describe("LocalMaintainerScheduler", () => {
 
     await scheduler.tickOnce();
 
-    expect(client.createLocalBoardMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", {
-      trigger: "review",
-      task_ids: ["review-me"],
-    });
+    expect(client.enqueueMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", expect.objectContaining({ trigger: "review" }));
     expect(client.createTask).not.toHaveBeenCalled();
   });
 
-  it("does not review unsettled tasks or create a duplicate active review", async () => {
+  it("does not review unsettled tasks or enqueue while a review run is active", async () => {
     const unsettled = task("too-new", { status: "in_review", updated_at: new Date(NOW - 119_999).toISOString() });
-    const activeReview = task("active-review", {
-      status: "error",
-      assigned_to: "agent-maintainer",
-      metadata: { maintainer_id: "maintainer-1", maintainer_trigger: "review", maintainer_trigger_version: 1 },
-    });
-    const { client, scheduler } = harness([maintainer({ heartbeat_enabled: false })], [unsettled, activeReview]);
+    const { client, scheduler } = harness([maintainer({ heartbeat_enabled: false })], [unsettled]);
 
     await scheduler.tickOnce();
+    expect(client.enqueueMaintainerRun).not.toHaveBeenCalled();
 
-    expect(client.createLocalBoardMaintainerRun).not.toHaveBeenCalled();
-    expect(client.createTask).not.toHaveBeenCalled();
+    const activeReview = [{ id: "run-review", trigger: "review", status: "queued", created_at: new Date(NOW - 60_000).toISOString() }];
+    const second = harness([maintainer({ heartbeat_enabled: false })], [unsettled], activeReview);
+    await second.scheduler.tickOnce();
+    expect(second.client.enqueueMaintainerRun).not.toHaveBeenCalled();
   });
 
   it("runs heartbeat-only mode only after its interval and deduplicates active runs", async () => {
-    const recentCompleted = task("recent-heartbeat", {
-      status: "done",
-      metadata: { maintainer_id: "maintainer-1", maintainer_trigger: "heartbeat", maintainer_trigger_version: 1 },
-      created_at: new Date(NOW - 3_599_000).toISOString(),
-    });
-    const first = harness([maintainer({ review_enabled: false })], [recentCompleted]);
+    const recentRun = [{ id: "run-hb", trigger: "heartbeat", status: "completed", created_at: new Date(NOW - 3_599_000).toISOString() }];
+    const first = harness([maintainer({ review_enabled: false })], [], recentRun);
     await first.scheduler.tickOnce();
-    expect(first.client.createLocalBoardMaintainerRun).not.toHaveBeenCalled();
+    expect(first.client.enqueueMaintainerRun).not.toHaveBeenCalled();
 
-    const active = task("active-heartbeat", {
-      status: "in_progress",
-      assigned_to: "agent-maintainer",
-      metadata: { maintainer_id: "maintainer-1", maintainer_trigger: "heartbeat", maintainer_trigger_version: 1 },
-      created_at: new Date(NOW - 7_200_000).toISOString(),
-    });
-    const second = harness([maintainer({ review_enabled: false })], [active]);
+    const active = [{ id: "run-hb-active", trigger: "heartbeat", status: "running", created_at: new Date(NOW - 7_200_000).toISOString() }];
+    const second = harness([maintainer({ review_enabled: false })], [], active);
     await second.scheduler.tickOnce();
-    expect(second.client.createLocalBoardMaintainerRun).not.toHaveBeenCalled();
+    expect(second.client.enqueueMaintainerRun).not.toHaveBeenCalled();
   });
 
   it("runs both enabled modes independently", async () => {
@@ -125,10 +117,22 @@ describe("LocalMaintainerScheduler", () => {
 
     await scheduler.tickOnce();
 
-    expect(client.createLocalBoardMaintainerRun).toHaveBeenCalledTimes(2);
-    expect(client.createLocalBoardMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", expect.objectContaining({ trigger: "review" }));
-    expect(client.createLocalBoardMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", { trigger: "heartbeat" });
+    expect(client.enqueueMaintainerRun).toHaveBeenCalledTimes(2);
+    expect(client.enqueueMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", expect.objectContaining({ trigger: "review" }));
+    expect(client.enqueueMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1", expect.objectContaining({ trigger: "heartbeat" }));
     expect(client.createTask).not.toHaveBeenCalled();
+  });
+
+  it("attempts to claim a queued run for each active maintainer", async () => {
+    const { client, scheduler } = harness([maintainer({ review_enabled: false })], [], []);
+    client.claimMaintainerRun.mockResolvedValueOnce({
+      run: { id: "run-exec", trigger: "heartbeat", idempotency_key: "hb-1", routing_key: null, status: "queued" },
+    });
+
+    await scheduler.tickOnce();
+
+    expect(client.claimMaintainerRun).toHaveBeenCalledWith("board-1", "maintainer-1");
+    // Completion/failure is covered by LocalMaintainerRuntime tests.
   });
 
   it("skips paused, archived, and AMA maintainers without listing tasks", async () => {
@@ -141,7 +145,7 @@ describe("LocalMaintainerScheduler", () => {
     await scheduler.tickOnce();
 
     expect(client.listTasks).not.toHaveBeenCalled();
-    expect(client.createLocalBoardMaintainerRun).not.toHaveBeenCalled();
+    expect(client.enqueueMaintainerRun).not.toHaveBeenCalled();
     expect(client.createTask).not.toHaveBeenCalled();
   });
 });

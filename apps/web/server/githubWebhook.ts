@@ -1,3 +1,4 @@
+import { listGithubEventMaintainersForRepository } from "./boardMaintainerRepo";
 import type { D1 } from "./db";
 import {
   addInstallationRepositories,
@@ -9,6 +10,7 @@ import {
   upsertInstallation,
 } from "./githubInstallations";
 import { createLogger } from "./logger";
+import { enqueueMaintainerRun } from "./maintainerRuntimeRepo";
 import { cancelTask, completeTask, getTask } from "./taskRepo";
 import type { AppServices } from "./types";
 
@@ -189,4 +191,75 @@ export async function handleGithubInstallationRepositoriesEvent(
     (payload.repositories_removed ?? []).map((repo) => repo.full_name).filter((name): name is string => Boolean(name)),
   );
   return { handled: true, action };
+}
+
+// ─── Local maintainer GitHub event ingestion (stage 4) ────────────────────────
+// Real-time webhook feed for maintainers with github_events_enabled. Normalizes
+// issue/PR events into maintainer_runs keyed by subject + action (idempotent),
+// routed by `github:<repo>:<issue|pull>:<number>` for session reuse.
+
+type GithubSubjectEvent = {
+  repository?: { full_name?: string; node_id?: string };
+  installation?: { id?: number };
+  action?: string;
+  issue?: { number?: number; node_id?: string };
+  pull_request?: { number?: number; node_id?: string };
+  comment?: { node_id?: string };
+};
+
+const MAINTAINER_GITHUB_EVENTS = new Set(["issues", "issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"]);
+
+const MAINTAINER_GITHUB_ACTIONS = new Set([
+  "opened",
+  "created",
+  "edited",
+  "reopened",
+  "closed",
+  "synchronize",
+  "ready_for_review",
+  "converted_to_draft",
+  "commented",
+]);
+
+export async function handleGithubMaintainerEvent(
+  db: D1,
+  event: string,
+  payload: GithubSubjectEvent,
+): Promise<{ handled: boolean; enqueued: number }> {
+  if (!MAINTAINER_GITHUB_EVENTS.has(event)) return { handled: false, enqueued: 0 };
+  const action = payload.action ?? "";
+  if (!MAINTAINER_GITHUB_ACTIONS.has(action)) return { handled: false, enqueued: 0 };
+
+  const repository = payload.repository?.full_name;
+  const installationId = payload.installation?.id;
+  if (!repository || !installationId) return { handled: false, enqueued: 0 };
+
+  const subject =
+    event === "pull_request" || event === "pull_request_review" || event === "pull_request_review_comment" ? payload.pull_request : payload.issue;
+  const number = subject?.number;
+  const subjectNodeId = subject?.node_id;
+  const commentNodeId = payload.comment?.node_id;
+  if (!number || !subjectNodeId) return { handled: false, enqueued: 0 };
+
+  const subjectType = event === "pull_request" || event === "pull_request_review" || event === "pull_request_review_comment" ? "pull" : "issue";
+  const routingKey = `github:${repository}:${subjectType}:${number}`;
+  const idempotencyKey = `github:${subjectNodeId}:${action}${commentNodeId ? `:${commentNodeId}` : ""}`;
+
+  const maintainers = await listGithubEventMaintainersForRepository(db, installationId, repository);
+  let enqueued = 0;
+  for (const maintainer of maintainers) {
+    const run = await enqueueMaintainerRun(db, {
+      ownerId: maintainer.owner_id,
+      boardId: maintainer.board_id,
+      maintainerId: maintainer.id,
+      trigger: "github",
+      idempotencyKey,
+      routingKey,
+    });
+    if (run) enqueued += 1;
+  }
+  if (enqueued > 0) {
+    logger.info(`Enqueued ${enqueued} maintainer run(s) for ${event}.${action} on ${repository}#${number}`);
+  }
+  return { handled: true, enqueued };
 }
