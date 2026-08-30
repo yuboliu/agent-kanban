@@ -159,13 +159,7 @@ export interface AgentIdentity {
   privateKeyJwk: JsonWebKey;
 }
 
-export async function prepareAgent(
-  ownerId: string,
-  input: CreateAgentInput,
-  identity: AgentIdentity,
-  builtin = false,
-  amaAgentId: string | null = null,
-): Promise<PreparedAgent> {
+export async function prepareAgent(ownerId: string, input: CreateAgentInput, identity: AgentIdentity, builtin = false): Promise<PreparedAgent> {
   const { id, publicKeyBase64, fingerprint, privateKeyJwk } = identity;
   const now = new Date().toISOString();
   const soul = input.soul ?? null;
@@ -191,7 +185,6 @@ export async function prepareAgent(
     public_key: publicKeyBase64,
     fingerprint,
     builtin: builtin ? 1 : 0,
-    ama_agent_id: amaAgentId,
     metadata: input.reasoning_effort ? { reasoning_effort: input.reasoning_effort } : {},
     created_at: now,
     updated_at: now,
@@ -207,8 +200,8 @@ export async function insertAgent(db: D1, agent: PreparedAgent, extras?: { mailb
   const metadataJson = JSON.stringify(agent.metadata ?? {});
   await db
     .prepare(`
-    INSERT INTO agents (id, owner_id, name, username, bio, soul, role, kind, handoff_to, runtime, model, relay_id, skills, subagents, taints, version, public_key, private_key, fingerprint, builtin, mailbox_token, gpg_subkey_id, ama_agent_id, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agents (id, owner_id, name, username, bio, soul, role, kind, handoff_to, runtime, model, relay_id, skills, subagents, taints, version, public_key, private_key, fingerprint, builtin, mailbox_token, gpg_subkey_id, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       agent.id,
@@ -233,7 +226,6 @@ export async function insertAgent(db: D1, agent: PreparedAgent, extras?: { mailb
       agent.builtin,
       extras?.mailboxToken ?? null,
       extras?.gpgSubkeyId ?? null,
-      agent.ama_agent_id ?? null,
       metadataJson,
       agent.created_at,
       agent.updated_at,
@@ -286,7 +278,7 @@ export async function listAgents(db: D1, ownerId: string, filters: AgentListFilt
     )
     SELECT a.id, a.owner_id, a.name, a.username, a.gpg_subkey_id, a.bio, a.soul, a.role, a.kind, a.handoff_to, a.runtime, a.model, a.relay_id, a.skills, a.subagents, a.taints,
       a.version,
-      a.public_key, a.fingerprint, a.builtin, a.ama_agent_id, a.metadata, a.created_at, a.updated_at,
+      a.public_key, a.fingerprint, a.builtin, a.metadata, a.created_at, a.updated_at,
       CASE WHEN EXISTS (
         SELECT 1 FROM machines m, json_each(m.runtimes) rt
         WHERE m.owner_id = a.owner_id
@@ -369,7 +361,7 @@ export async function getAgent(db: D1, agentId: string, ownerId: string): Promis
       .prepare(`
     SELECT a.id, a.owner_id, a.name, a.username, a.gpg_subkey_id, a.bio, a.soul, a.role, a.kind, a.handoff_to, a.runtime, a.model, a.relay_id, a.skills, a.subagents, a.taints,
       a.version,
-      a.public_key, a.fingerprint, a.builtin, a.ama_agent_id, a.metadata, a.created_at, a.updated_at,
+      a.public_key, a.fingerprint, a.builtin, a.metadata, a.created_at, a.updated_at,
       CASE WHEN EXISTS (
         SELECT 1 FROM machines m, json_each(m.runtimes) rt
         WHERE m.owner_id = a.owner_id
@@ -695,33 +687,6 @@ export async function updateAgentMetadataAnnotations(db: D1, ownerId: string, ag
 
 export async function setAgentGpgSubkeyId(db: D1, agentId: string, gpgSubkeyId: string): Promise<void> {
   await db.prepare("UPDATE agents SET gpg_subkey_id = ? WHERE id = ?").bind(gpgSubkeyId, agentId).run();
-}
-
-// The AMA agent id is shared by every version row of the same username, so set
-// it across the whole lineage (latest + snapshots), keyed by ownership.
-export async function setAgentAmaId(db: D1, ownerId: string, agentId: string, amaAgentId: string): Promise<void> {
-  const row = await db.prepare("SELECT username FROM agents WHERE id = ? AND owner_id = ?").bind(agentId, ownerId).first<{ username: string }>();
-  if (!row) throw new Error("Agent not found");
-  await db.prepare("UPDATE agents SET ama_agent_id = ? WHERE owner_id = ? AND username = ?").bind(amaAgentId, ownerId, row.username).run();
-}
-
-export async function getAgentAmaId(db: D1, agentId: string): Promise<string | null> {
-  const row = await db.prepare("SELECT ama_agent_id FROM agents WHERE id = ?").bind(agentId).first<{ ama_agent_id: string | null }>();
-  return row?.ama_agent_id ?? null;
-}
-
-// Latest, non-builtin worker agents that predate AMA and so have no backing AMA
-// agent. Only workers are dispatchable; leaders authenticate/review inside AK
-// and do not mirror to AMA. Snapshots share the username's ama_agent_id via
-// setAgentAmaId, and builtin agents are never given one, so both are excluded.
-export async function listAgentsMissingAmaAgent(db: D1, ownerId: string): Promise<{ id: string; username: string; runtime: string }[]> {
-  const result = await db
-    .prepare(
-      "SELECT id, username, runtime FROM agents WHERE owner_id = ? AND version = 'latest' AND builtin = 0 AND kind = 'worker' AND ama_agent_id IS NULL",
-    )
-    .bind(ownerId)
-    .all<{ id: string; username: string; runtime: string }>();
-  return result.results;
 }
 
 export async function getAgentMailboxToken(db: D1, agentId: string): Promise<string | null> {

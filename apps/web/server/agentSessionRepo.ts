@@ -48,7 +48,6 @@ export async function createAmaAgentSession(
     agentId: string;
     sessionId: string;
     sessionPublicKey: string;
-    amaSessionId?: string | null;
   },
 ): Promise<{ delegation_proof: string }> {
   const agent = await db.prepare("SELECT owner_id FROM agents WHERE id = ?").bind(input.agentId).first<{ owner_id: string }>();
@@ -64,11 +63,11 @@ export async function createAmaAgentSession(
   await db
     .prepare(`
     INSERT INTO ama_agent_sessions (
-      id, owner_id, agent_id, ama_session_id, status, public_key, delegation_proof, created_at
+      id, owner_id, agent_id, status, public_key, delegation_proof, created_at
     )
-    VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+    VALUES (?, ?, ?, 'active', ?, ?, ?)
   `)
-    .bind(input.sessionId, input.ownerId, input.agentId, input.amaSessionId ?? null, input.sessionPublicKey, delegationProof, now)
+    .bind(input.sessionId, input.ownerId, input.agentId, input.sessionPublicKey, delegationProof, now)
     .run();
 
   await registerBetterAuthAgentSession(env, db, {
@@ -80,43 +79,6 @@ export async function createAmaAgentSession(
   });
 
   return { delegation_proof: delegationProof };
-}
-
-export async function bindAmaAgentSession(db: D1, sessionId: string, amaSessionId: string): Promise<void> {
-  await db.prepare("UPDATE ama_agent_sessions SET ama_session_id = ? WHERE id = ?").bind(amaSessionId, sessionId).run();
-}
-
-export async function setAmaAgentSessionSecretRef(db: D1, sessionId: string, secretRef: string | null): Promise<void> {
-  await db.prepare("UPDATE ama_agent_sessions SET secret_ref = ? WHERE id = ?").bind(secretRef, sessionId).run();
-}
-
-// Absolute set (idempotent) — usage comes pre-aggregated from the AMA usage
-// summary at teardown time, unlike the legacy delta-based updateSessionUsage.
-export async function setAmaAgentSessionUsageTotals(
-  db: D1,
-  sessionId: string,
-  totals: { promptTokens: number; completionTokens: number; costMicros: number },
-): Promise<void> {
-  await db
-    .prepare("UPDATE ama_agent_sessions SET input_tokens = ?, output_tokens = ?, cost_micro_usd = ? WHERE id = ?")
-    .bind(totals.promptTokens, totals.completionTokens, totals.costMicros, sessionId)
-    .run();
-}
-
-export interface AmaAgentSessionRow {
-  id: string;
-  owner_id: string;
-  agent_id: string;
-  ama_session_id: string | null;
-  status: "active" | "closed";
-  secret_ref: string | null;
-}
-
-export async function getAmaAgentSession(db: D1, sessionId: string): Promise<AmaAgentSessionRow | null> {
-  return db
-    .prepare("SELECT id, owner_id, agent_id, ama_session_id, status, secret_ref FROM ama_agent_sessions WHERE id = ?")
-    .bind(sessionId)
-    .first<AmaAgentSessionRow>();
 }
 
 async function registerBetterAuthAgentSession(
@@ -257,8 +219,7 @@ export async function listSessions(db: D1, agentId: string): Promise<AgentSessio
       s.created_at,
 	      s.closed_at,
 	      m.name AS machine_name,
-	      'machine' AS runtime_source,
-	      NULL AS ama_session_id
+	      'machine' AS runtime_source
     FROM agent_sessions s
     JOIN machines m ON s.machine_id = m.id
     WHERE s.agent_id = ?
@@ -278,8 +239,7 @@ export async function listSessions(db: D1, agentId: string): Promise<AgentSessio
       s.created_at,
 	      s.closed_at,
 	      'AMA runtime' AS machine_name,
-	      'ama' AS runtime_source,
-	      s.ama_session_id AS ama_session_id
+	      'machine' AS runtime_source
 	    FROM ama_agent_sessions s
 	    WHERE s.agent_id = ?
     ORDER BY created_at DESC

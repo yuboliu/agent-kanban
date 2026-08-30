@@ -174,7 +174,7 @@ describe("shared constants", () => {
   });
 
   it("keeps worker runtimes separate from the broader leader runtime set", () => {
-    expect(AGENT_RUNTIMES).toEqual(["claude", "codex", "gemini", "copilot", "hermes", "ama"]);
+    expect(AGENT_RUNTIMES).toEqual(["claude", "codex", "gemini", "copilot", "hermes"]);
     expect(LEADER_AGENT_RUNTIMES).toEqual([
       "claude",
       "codex",

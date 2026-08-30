@@ -24,8 +24,6 @@ const RUNTIME_COMMANDS: Partial<Record<AgentRuntime, string>> = {
   gemini: "gemini",
   copilot: "copilot",
   hermes: "hermes",
-  // Cloud-only runtime: no local binary, never detected as a machine runtime.
-  ama: "ama-cloud-sandbox",
 };
 
 export function registerProvider(provider: AgentProvider): void {

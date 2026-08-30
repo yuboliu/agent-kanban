@@ -167,7 +167,7 @@ export interface MachineRuntime {
   checked_at: string;
 }
 
-export type MachineHosting = "local" | "cloud";
+export type MachineHosting = "local";
 
 export interface Machine {
   id: string;
@@ -191,7 +191,7 @@ export interface MachineWithAgents extends Machine {
 // ─── Agent ───
 
 export type AgentKind = "worker" | "leader";
-export type AgentRuntime = "claude" | "codex" | "gemini" | "copilot" | "hermes" | "ama";
+export type AgentRuntime = "claude" | "codex" | "gemini" | "copilot" | "hermes";
 export type LeaderAgentRuntime =
   | "claude"
   | "codex"
@@ -228,7 +228,6 @@ export interface AgentTaint {
 }
 
 export const MAINTAINER_TAINT_KEY = "agent-kanban.dev/maintainer";
-export const AMA_BACKFILL_FAILED_TAINT_KEY = "agent-kanban.dev/ama-backfill-failed";
 
 export function hasNoScheduleTaint(taints: AgentTaint[] | null | undefined): boolean {
   return taints?.some((taint) => taint.effect === "NoSchedule") ?? false;
@@ -274,7 +273,7 @@ export function findInvalidSkillRef(skills: string[] | null | undefined): string
   return skills?.find((skill) => !isValidSkillRef(skill)) ?? null;
 }
 
-export const AGENT_RUNTIMES: readonly AgentRuntime[] = ["claude", "codex", "gemini", "copilot", "hermes", "ama"] as const;
+export const AGENT_RUNTIMES: readonly AgentRuntime[] = ["claude", "codex", "gemini", "copilot", "hermes"] as const;
 
 export const LEADER_AGENT_RUNTIMES: readonly LeaderAgentRuntime[] = [
   "claude",
@@ -298,7 +297,6 @@ export const RUNTIME_LABELS: Record<AnyAgentRuntime, string> = {
   gemini: "Gemini CLI",
   copilot: "GitHub Copilot",
   hermes: "Hermes",
-  ama: "AMA Cloud",
   antigravity: "Antigravity CLI",
   opencode: "OpenCode",
   cursor: "Cursor CLI",
@@ -308,13 +306,6 @@ export const RUNTIME_LABELS: Record<AnyAgentRuntime, string> = {
   kiro: "Kiro CLI",
   pi: "Pi Agent",
 };
-
-// Runtimes executed on AMA cloud sandboxes instead of machine-hosted runners.
-export const CLOUD_AGENT_RUNTIMES: ReadonlySet<AgentRuntime> = new Set(["ama"]);
-
-export function isCloudAgentRuntime(runtime: AgentRuntime): boolean {
-  return CLOUD_AGENT_RUNTIMES.has(runtime);
-}
 
 const RUNTIME_ALIASES: Record<string, AgentRuntime> = {
   "claude-code": "claude",
@@ -351,7 +342,6 @@ export interface Agent {
   public_key: string;
   fingerprint: string;
   builtin: number;
-  ama_agent_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -403,7 +393,7 @@ export interface AgentSession {
 
 export interface AgentSessionWithMachine extends AgentSession {
   machine_name: string;
-  runtime_source?: "machine" | "ama";
+  runtime_source?: "machine";
 }
 
 // ─── Repository ───
