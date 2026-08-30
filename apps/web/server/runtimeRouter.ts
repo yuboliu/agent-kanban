@@ -2,7 +2,6 @@ import { AGENT_RUNTIMES, type AgentRuntime } from "@agent-kanban/shared";
 import type { D1 } from "./db";
 import { legacyRuntimeAvailableOnMachines } from "./legacyRuntime";
 import { listMachinesForRuntimeRouting } from "./machineRepo";
-import type { TaskRuntimeSource } from "./runtimeBinding";
 import type { AppServices } from "./types";
 
 export interface RuntimeSourceAvailability {
@@ -29,8 +28,4 @@ export async function listAvailableRuntimeSources(db: D1, _env: AppServices, own
     return [runtime, { legacy }] as const;
   });
   return new Map(entries);
-}
-
-export function selectRuntimeSource(availability: RuntimeSourceAvailability): TaskRuntimeSource | null {
-  return availability.legacy ? "legacy" : null;
 }

@@ -453,7 +453,7 @@ export async function claimTask(
   agentId: string,
   identity: IdentityType,
   sessionId: string | null = null,
-  expectedRuntimeSource?: "ama" | "legacy",
+  expectedRuntimeSource?: "legacy",
 ): Promise<Task | null> {
   const task = await db.prepare("SELECT * FROM tasks WHERE id = ?").bind(taskId).first<Task>();
   if (!task) return null;
@@ -462,21 +462,7 @@ export async function claimTask(
 
   const now = new Date().toISOString();
   const logId = newLongId();
-  const sourceGuard =
-    expectedRuntimeSource === "ama"
-      ? `AND (
-          json_extract(metadata, '$.annotations."runtime.source"') = ?
-          OR (
-            json_extract(metadata, '$.annotations."runtime.source"') IS NULL
-            AND (
-              json_type(metadata, '$.annotations."ama.sessionId"') = 'text'
-              OR json_type(metadata, '$.annotations."ama.dispatch.result"') = 'text'
-            )
-          )
-        )`
-      : expectedRuntimeSource === "legacy"
-        ? `AND json_extract(metadata, '$.annotations."runtime.source"') = ?`
-        : "";
+  const sourceGuard = expectedRuntimeSource === "legacy" ? `AND json_extract(metadata, '$.annotations."runtime.source"') = ?` : "";
   const results = await db.batch([
     db
       .prepare(`
