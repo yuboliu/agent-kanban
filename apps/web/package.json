@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "concurrently -k -n api,web -c blue,green \"pnpm server\" \"pnpm client\"",
+    "server": "AK_PORT=${AK_API_PORT:-8787} tsx server/node/cli.ts",
+    "client": "vite dev",
     "prebuild": "pnpm --filter @agent-kanban/shared build && pnpm --filter agent-kanban build && mkdir -p public/cli && cp ../../packages/cli/dist/standalone.js public/cli/ak-standalone.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "vite build && npx wrangler deploy",
-    "db:migrate": "npx wrangler d1 migrations apply agent-kanban-db --local",
-    "db:reset": "rm -rf .wrangler/state && pnpm db:migrate",
+    "db:migrate": "tsx server/database/migrate-cli.ts",
+    "db:reset": "rm -f \"${AK_DATABASE_PATH:-$HOME/.local/share/agent-kanban/agent-kanban.sqlite}\" && pnpm db:migrate",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -66,7 +67,9 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.1",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "vite": "^8.0.10",
     "wrangler": "^4.87.0"

@@ -237,10 +237,14 @@ api_get() {
 
 dev_var() {
   local key="$1"
+  # Pure-local runtime keeps runtime secrets in the data-dir env file
+  # (~/.local/share/agent-kanban/env); fall back to the legacy .dev.vars.
+  local file="${AK_DATA_DIR:-$HOME/.local/share/agent-kanban}/env"
+  [ -f "$file" ] || file='apps/web/.dev.vars'
   node -e "
 const fs = require('fs');
 const key = process.argv[1];
-const file = 'apps/web/.dev.vars';
+const file = process.argv[2];
 if (!fs.existsSync(file)) process.exit(1);
 const line = fs.readFileSync(file, 'utf8').split(/\\r?\\n/).find((item) => item.startsWith(key + '='));
 if (!line) process.exit(1);
@@ -249,7 +253,7 @@ if ((value.startsWith('\"') && value.endsWith('\"')) || (value.startsWith(\"'\")
   value = value.slice(1, -1);
 }
 console.log(value);
-" "$key"
+" "$key" "$file"
 }
 
 write_artifact() {

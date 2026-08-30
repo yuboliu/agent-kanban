@@ -2,9 +2,10 @@
 #
 # service_runner.sh — one-click run Agent Kanban on 0.0.0.0 for remote access.
 #
-# Runs the exact same stack as `pnpm dev` (React SPA + Hono worker + local D1
-# via Miniflare) but binds Vite to 0.0.0.0, so the board is reachable from
-# other hosts on the LAN.
+# Runs the pure-local stack (stage 2+): builds the React SPA and serves the
+# whole app — Hono API, SSE, WebSocket relay, share/badge and static assets —
+# from a single Node process (apps/web/server/node/cli.ts). No Cloudflare,
+# Wrangler or Miniflare involved.
 #
 # It also starts this machine's local AK runtime (the `ak` machine runner that
 # executes tasks) so the whole stack comes up together — including after a
@@ -22,16 +23,15 @@
 #   stop / restart / status / logs   manage the background service
 #
 # Single-instance guarantee: the service holds an flock on .run/service.lock
-# for its whole lifetime (the vite process itself, via fd inheritance across
-# exec); its pid is written to .run/service.pid. A second start fails fast
-# instead of competing for the port. The lock is per-checkout (under .run), so
-# worktree copies can each run their own instance on a different --port.
+# for its whole lifetime (the Node server process itself, via fd inheritance
+# across exec); its pid is written to .run/service.pid. A second start fails
+# fast instead of competing for the port. The lock is per-checkout (under
+# .run), so worktree copies can each run their own instance on a --port.
 #
 # Refresh options (work with start / restart / run) — pick up new code:
 #   --pull       git pull --ff-only before starting (latest frontend+backend)
 #   --install    force pnpm install even if node_modules exists (dep changes)
-#   --build      rebuild @agent-kanban/shared (the dev server loads its dist,
-#                so shared-package changes need this to take effect)
+#   --build      rebuild @agent-kanban/shared + the web client (dist)
 #   --skip-install / --skip-migrate   skip the corresponding setup step
 #
 # Typical refresh restart after pulling new code:
@@ -39,10 +39,10 @@
 #
 # First run also:
 #   - installs dependencies if node_modules is missing
-#   - applies D1 migrations to the local database (.wrangler/state)
-#   - creates apps/web/.dev.vars (AUTH_SECRET + ALLOWED_HOSTS) when missing so
-#     auth works and email-verification links print to the log
-#   - sign in at /auth with email+password; the verification link is logged
+#   - applies local SQL migrations to the database
+#     (default: ~/.local/share/agent-kanban/agent-kanban.sqlite)
+#   - generates AUTH_SECRET + ALLOWED_HOSTS into the data-dir env file
+#   - sign in at /auth with username+password
 #
 set -euo pipefail
 
@@ -64,7 +64,8 @@ COMMAND=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$SCRIPT_DIR"
 WEB_DIR="$ROOT/apps/web"
-DEV_VARS="$WEB_DIR/.dev.vars"
+DATA_DIR="${AK_DATA_DIR:-$HOME/.local/share/agent-kanban}"
+ENV_FILE="$DATA_DIR/env"
 RUN_DIR="$ROOT/.run"
 LOG_DIR="$RUN_DIR/logs"
 LOG_FILE="$LOG_DIR/service.log"
@@ -104,17 +105,18 @@ The background service runs as a detached process (setsid, its own process
 group) with logs appended to .run/logs/service.log. Uniqueness is enforced by
 an flock on .run/service.lock — see the top of this script.
 
-It runs the same stack as `pnpm dev` (React SPA + Hono worker + local D1), but
-binds Vite to 0.0.0.0 so the board is reachable from other hosts on the LAN.
-It also starts this machine's local AK runtime (`ak local_start`) once the API
-is up — set AK_LOCAL_START=0 to skip, AK_LOCAL_API_URL to retarget it.
+It serves the whole app (React SPA + Hono API + WebSocket relay) from one
+pure-local Node process, bound to 0.0.0.0 so the board is reachable from other
+hosts on the LAN. No Cloudflare / Wrangler / Miniflare is involved.
+It also starts this machine's local AK runtime once the API is up — set
+AK_LOCAL_START=0 to skip, AK_LOCAL_API_URL to retarget it.
 
 First run:
   - installs dependencies if node_modules is missing
-  - applies D1 migrations to the local database (.wrangler/state)
-  - creates apps/web/.dev.vars (AUTH_SECRET + ALLOWED_HOSTS) when missing so
-    auth works and email-verification links print to the log
-  - sign in at /auth with email+password; the verification link is logged
+  - applies local SQL migrations to the database
+    (default: ~/.local/share/agent-kanban/agent-kanban.sqlite)
+  - generates AUTH_SECRET + ALLOWED_HOSTS into the data-dir env file
+  - sign in at /auth with username+password
 
 To start Agent Kanban automatically at boot, install the systemd unit:
   ./scripts/install-systemd-service.sh
@@ -236,22 +238,22 @@ step_install() {
   fi
 }
 
-# The dev server imports @agent-kanban/shared from its built dist/, so source
-# changes in packages/shared only take effect after a rebuild. Frontend and
-# server code under apps/web are compiled on the fly by vite and need no build.
+# The production single-process server serves the built client (apps/web/dist)
+# and imports @agent-kanban/shared from its built dist/, so a refresh restart
+# rebuilds both.
 step_build() {
   [ "$DO_BUILD" = "1" ] || return 0
-  info "Rebuilding @agent-kanban/shared…"
-  (cd "$ROOT" && pnpm --filter @agent-kanban/shared build)
+  info "Building @agent-kanban/shared + web client…"
+  (cd "$ROOT" && pnpm --filter @agent-kanban/web build)
 }
 
 # Returns 0 when every migration file in apps/web/migrations is recorded in the
-# local D1 d1_migrations table (i.e. the DB is up to date), 1 otherwise.
+# local database's d1_migrations table (i.e. the DB is up to date), 1 otherwise.
 migrate_verified() {
   command -v sqlite3 >/dev/null 2>&1 || return 1
   local db name
-  db="$(find "$WEB_DIR/.wrangler/state/v3/d1" -name '*.sqlite' 2>/dev/null | head -1)"
-  [ -n "$db" ] || return 1
+  db="${AK_DATABASE_PATH:-$DATA_DIR/agent-kanban.sqlite}"
+  [ -f "$db" ] || return 1
   for sql in "$WEB_DIR"/migrations/*.sql; do
     [ -e "$sql" ] || continue
     name="$(basename "$sql")"
@@ -262,21 +264,18 @@ migrate_verified() {
 
 step_migrate() {
   [ "$DO_MIGRATE" = "1" ] || return 0
-  info "Applying D1 migrations to the local database…"
-  # Fast path: if the local D1 DB already has every migration, skip wrangler
-  # entirely — it can otherwise finish the migration and then hang forever on
-  # an idle update-check HTTPS socket (tunneled networks).
+  mkdir -p "$DATA_DIR"
+  info "Applying local SQL migrations to $DATA_DIR/agent-kanban.sqlite…"
   if migrate_verified; then
-    info "Local D1 database already up to date."
+    info "Local database already up to date."
     return 0
   fi
-  # Bounded run + independent verification: never wait on wrangler indefinitely.
   local rc=0
-  (cd "$ROOT" && CI=true WRANGLER_SEND_METRICS=false timeout 120 pnpm --filter @agent-kanban/web db:migrate) || rc=$?
+  (cd "$ROOT" && timeout 120 pnpm --filter @agent-kanban/web db:migrate) || rc=$?
   if [ "$rc" -eq 124 ]; then
     warn "db:migrate timed out after 120s — checking whether migrations actually landed…"
     if migrate_verified; then
-      warn "Migrations are recorded in the local D1 database — continuing."
+      warn "Migrations are recorded in the local database — continuing."
     elif command -v sqlite3 >/dev/null 2>&1; then
       fatal "Migrations did not complete — rerun this script to retry."
     else
@@ -287,45 +286,54 @@ step_migrate() {
   fi
 }
 
-step_dev_vars() {
+step_env() {
+  mkdir -p "$DATA_DIR"
   local allowed ip
   allowed="localhost:${PORT},127.0.0.1:${PORT}"
   for ip in $(lan_ips); do allowed="${allowed},${ip}:${PORT}"; done
 
-  if [ -f "$DEV_VARS" ]; then
+  if [ -f "$ENV_FILE" ]; then
     # A file we generated: refresh the IP list but keep AUTH_SECRET stable so
     # existing sessions/sign-ups survive IP changes between runs.
-    if grep -q '^# Generated by service_runner.sh' "$DEV_VARS"; then
-      if grep -q '^ALLOWED_HOSTS=' "$DEV_VARS"; then
-        sed -i "s|^ALLOWED_HOSTS=.*|ALLOWED_HOSTS=$allowed|" "$DEV_VARS"
-      else
-        printf '\nALLOWED_HOSTS=%s\n' "$allowed" >> "$DEV_VARS"
-      fi
-      info "Refreshed ALLOWED_HOSTS in $DEV_VARS (AUTH_SECRET kept)."
+    if grep -q '^# Generated by service_runner.sh' "$ENV_FILE"; then
+      sed -i "s|^ALLOWED_HOSTS=.*|ALLOWED_HOSTS=$allowed|" "$ENV_FILE"
+      info "Refreshed ALLOWED_HOSTS in $ENV_FILE (AUTH_SECRET kept)."
       return 0
     fi
-    grep -q '^AUTH_SECRET=' "$DEV_VARS" \
-      || warn "$DEV_VARS exists but has no AUTH_SECRET — sign-in will fail. Add one, or delete the file and rerun."
-    grep -q '^ALLOWED_HOSTS=' "$DEV_VARS" \
-      || warn "$DEV_VARS exists but has no ALLOWED_HOSTS — email verification won't print locally and remote logins may be rejected. Add e.g. ALLOWED_HOSTS=localhost:${PORT},127.0.0.1:${PORT},<lan-ip>:${PORT}"
+    grep -q '^AUTH_SECRET=' "$ENV_FILE" \
+      || warn "$ENV_FILE exists but has no AUTH_SECRET — sign-in will fail. Add one, or delete the file and rerun."
     return 0
   fi
 
-  info "Creating $DEV_VARS (AUTH_SECRET + ALLOWED_HOSTS)…"
+  info "Creating $ENV_FILE (AUTH_SECRET + ALLOWED_HOSTS)…"
   local secret
   secret="$(openssl rand -hex 32 2>/dev/null || (head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n'))"
 
-  cat > "$DEV_VARS" <<EOF
-# Generated by service_runner.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ). Edit freely; this file is git-ignored.
+  cat > "$ENV_FILE" <<EOF
+# Generated by service_runner.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ). Edit freely.
 AUTH_SECRET=$secret
 ALLOWED_HOSTS=$allowed
 # Optional: enable "Sign in with GitHub". Create an OAuth app at
 # https://github.com/settings/developers, then uncomment and fill in:
 # GITHUB_CLIENT_ID=
 # GITHUB_CLIENT_SECRET=
+# Optional: GitHub App (webhook/installation tokens):
+# GITHUB_APP_ID=
+# GITHUB_APP_WEBHOOK_SECRET=
+# GITHUB_APP_PRIVATE_KEY=
 EOF
-  chmod 600 "$DEV_VARS"
-  info "Generated $DEV_VARS with a fresh AUTH_SECRET."
+  chmod 600 "$ENV_FILE"
+  info "Generated $ENV_FILE with a fresh AUTH_SECRET."
+}
+
+# Source the data-dir env file into the current shell (AUTH_SECRET etc.).
+load_env() {
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+  fi
 }
 
 step_local_start() {
@@ -372,16 +380,15 @@ step_banner() {
   if [ -z "$primary" ] && [ "$n" -eq 0 ]; then
     warn "No LAN IP detected — the server still binds $HOST:$PORT, but I couldn't enumerate an address. Check the network / firewall."
   fi
-  if [ -f "$DEV_VARS" ] && ! grep -q '^GITHUB_CLIENT_SECRET=' "$DEV_VARS"; then
-    printf '%s[·]%s First login: open /auth and register with email+password.\n' "$CY" "$R"
-    printf '%s[·]%s The email-verification link prints in the service log (local dev never sends real email).\n' "$CY" "$R"
-    printf '%s[·]%s GitHub OAuth is off — add GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET to %s to enable it.\n' "$CY" "$R" "$DEV_VARS"
+  if [ -f "$ENV_FILE" ] && ! grep -q '^GITHUB_CLIENT_SECRET=' "$ENV_FILE"; then
+    printf '%s[·]%s First login: open /auth and register with username+password.\n' "$CY" "$R"
+    printf '%s[·]%s GitHub OAuth is off — add GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET to %s to enable it.\n' "$CY" "$R" "$ENV_FILE"
   fi
   printf '%s[·]%s After creating a machine API key, start local task execution with scripts/local_runtime_runner.sh.\n' "$CY" "$R"
   printf '\n'
 }
 
-# Full foreground run: setup + exec vite. Used by `run` directly, by the
+# Full foreground run: setup + exec the Node server. Used by `run` directly, by the
 # detached process spawned from `start`, and by the systemd unit.
 cmd_run() {
   step_prereqs
@@ -389,16 +396,17 @@ cmd_run() {
   step_install
   step_build
   step_migrate
-  step_dev_vars
+  step_env
+  load_env
   # Bring up the local AK runtime only when the API is already reachable (e.g.
   # systemd Restart=on-failure respawn after a crash). On a cold boot the UI
   # isn't listening yet, so this no-ops — the runtime starts on the next respawn.
   step_local_start
   step_banner
   acquire_lock
-  info "Starting dev server on $HOST:$PORT (React SPA + Hono worker + local D1). Ctrl-C to stop."
+  info "Starting Node server on $HOST:$PORT (pure-local: React SPA + Hono API + WebSocket relay). Ctrl-C to stop."
   cd "$WEB_DIR"
-  exec npx vite dev --host "$HOST" --port "$PORT"
+  exec env AK_HOST="$HOST" AK_PORT="$PORT" npx tsx server/node/cli.ts
 }
 
 cmd_start() {
@@ -425,7 +433,7 @@ cmd_start() {
   step_install
   step_build
   step_migrate
-  step_dev_vars
+  step_env
 
   mkdir -p "$LOG_DIR"
   {
@@ -442,7 +450,7 @@ cmd_start() {
     bash -c "exec 8>&-; exec '$ROOT/service_runner.sh' run --skip-install --skip-migrate >> '$LOG_FILE' 2>&1" \
     </dev/null &
 
-  # Wait for the port (vite cold start + D1 init can take a few seconds).
+  # Wait for the port (Node cold start + migration can take a few seconds).
   local waited=0
   while [ "$waited" -lt 30 ]; do
     if port_listening; then break; fi
@@ -475,11 +483,10 @@ cmd_stop() {
     local pid waited=0
     pid="$(service_pid)"
     info "Stopping service process $pid…"
-    # Prefer killing the whole process group: vite's children (workerd,
-    # esbuild) inherit the lock fd and would keep the singleton held after
-    # vite itself dies. Only group-kill when the service leads its own group —
-    # a foreground `run` shares the user's shell pgrp, which must not be
-    # group-killed.
+    # Prefer killing the whole process group: children (esbuild) inherit the
+    # lock fd and would keep the singleton held after the server itself dies.
+    # Only group-kill when the service leads its own group — a foreground `run`
+    # shares the user's shell pgrp, which must not be group-killed.
     if [ -n "$pid" ] && [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
       kill -- -"$pid" 2>/dev/null || true
     else
