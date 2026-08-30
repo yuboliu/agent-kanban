@@ -1,5 +1,4 @@
 import "@testing-library/jest-dom/vitest";
-import { AK_ANNOTATION_KEY_SOURCE_EVENT, AK_ANNOTATION_KEY_SOURCE_URL, AK_LABEL_KEY_GITHUB_SUBJECT } from "@agent-kanban/shared";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -12,26 +11,24 @@ vi.mock("../apps/web/src/components/Header", () => ({
 
 const maintainerDialog = vi.fn();
 vi.mock("../apps/web/src/components/BoardMaintainerDialog", () => ({
-  BoardMaintainerDialog: (props: { open: boolean; maintainer: { scheduler_type?: string } }) => {
+  BoardMaintainerDialog: (props: { open: boolean; maintainer: { runtime?: string } }) => {
     maintainerDialog(props);
-    return props.open ? React.createElement("div", { role: "dialog" }, "Choose triggers: local ak start") : null;
+    return props.open ? React.createElement("div", { role: "dialog" }, "Trigger settings") : null;
   },
 }));
 
 const useBoard = vi.fn();
 const useBoardMaintainer = vi.fn();
 const useBoardMaintainerRuns = vi.fn();
+const useBoardMaintainerSessions = vi.fn();
 const useBoardMaintainerMemories = vi.fn();
-const useBoardMaintainerVariables = vi.fn();
-const useUpdateBoardMaintainerVariables = vi.fn();
 
 vi.mock("../apps/web/src/hooks/useBoard", () => ({
   useBoard: (...args: unknown[]) => useBoard(...args),
   useBoardMaintainer: (...args: unknown[]) => useBoardMaintainer(...args),
   useBoardMaintainerRuns: (...args: unknown[]) => useBoardMaintainerRuns(...args),
+  useBoardMaintainerSessions: (...args: unknown[]) => useBoardMaintainerSessions(...args),
   useBoardMaintainerMemories: (...args: unknown[]) => useBoardMaintainerMemories(...args),
-  useBoardMaintainerVariables: (...args: unknown[]) => useBoardMaintainerVariables(...args),
-  useUpdateBoardMaintainerVariables: (...args: unknown[]) => useUpdateBoardMaintainerVariables(...args),
 }));
 
 function renderMaintainerDetail() {
@@ -58,12 +55,13 @@ describe("MaintainerDetailPage", () => {
         prompt: "Inspect open work.",
         status: "active",
         agent_id: "agent-1",
+        runtime: "claude",
         interval_seconds: 3600,
         last_run_at: "2026-06-08T12:10:00.000Z",
-        last_session_id: "session_1",
         last_error_message: null,
         heartbeat_enabled: true,
         review_enabled: true,
+        github_events_enabled: false,
         scheduler_type: "local",
       },
     });
@@ -73,41 +71,44 @@ describe("MaintainerDetailPage", () => {
       runs: [
         {
           id: "run_1",
-          scheduled_for: "2026-06-08T12:00:00.000Z",
-          heartbeat_at: "2026-06-08T12:00:03.000Z",
-          triggered_at: "2026-06-08T12:00:00.000Z",
+          trigger: "heartbeat",
+          idempotency_key: "hb-2026-06-08T12:00:00.000Z",
+          routing_key: null,
           status: "completed",
+          machine_id: "machine-a",
           session_id: "session_1",
-          error_message: null,
-          metadata: { attempt: 1 },
+          error: null,
+          created_at: "2026-06-08T12:00:00.000Z",
+          started_at: "2026-06-08T12:00:03.000Z",
+          finished_at: "2026-06-08T12:05:00.000Z",
         },
         {
-          id: "run_duplicate",
-          scheduled_for: null,
-          heartbeat_at: null,
-          triggered_at: "2026-06-08T12:05:00.000Z",
-          status: "dispatched",
-          session_id: "session_1",
-          error_message: null,
-          metadata: {
-            labels: {
-              [AK_LABEL_KEY_GITHUB_SUBJECT]: "github:saltbo/slink:issue:42",
-            },
-            annotations: {
-              [AK_ANNOTATION_KEY_SOURCE_EVENT]: "issue_comment.created",
-              [AK_ANNOTATION_KEY_SOURCE_URL]: "https://github.com/saltbo/slink/issues/42#issuecomment-12345",
-            },
-          },
-        },
-        {
-          id: "run_failed_without_session",
-          scheduled_for: null,
-          heartbeat_at: null,
-          triggered_at: "2026-06-08T12:06:00.000Z",
+          id: "run_2",
+          trigger: "github",
+          idempotency_key: "gh-issue-comment-123",
+          routing_key: "github:saltbo/slink:issue:42",
           status: "failed",
+          machine_id: "machine-a",
           session_id: null,
-          error_message: "No session created",
-          metadata: { event: "issues" },
+          error: "provider exited non-zero",
+          created_at: "2026-06-08T12:06:00.000Z",
+          started_at: "2026-06-08T12:06:00.000Z",
+          finished_at: "2026-06-08T12:07:00.000Z",
+        },
+      ],
+    });
+    useBoardMaintainerSessions.mockReturnValue({
+      loading: false,
+      refresh: vi.fn(),
+      sessions: [
+        {
+          id: "session_1",
+          routing_key: "github:saltbo/slink:issue:42",
+          status: "open",
+          machine_id: "machine-a",
+          last_run_at: "2026-06-08T12:06:00.000Z",
+          created_at: "2026-06-08T11:00:00.000Z",
+          updated_at: "2026-06-08T12:06:00.000Z",
         },
       ],
     });
@@ -134,56 +135,45 @@ describe("MaintainerDetailPage", () => {
         },
       ],
     });
-    useBoardMaintainerVariables.mockReturnValue({
-      loading: false,
-      error: null,
-      refresh: vi.fn(),
-      variables: [{ name: "GH_TOKEN" }],
-    });
-    useUpdateBoardMaintainerVariables.mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-    });
   });
 
-  it("renders maintainer memory, variables, and activity", () => {
+  it("renders maintainer memory, sessions, and activity", () => {
     renderMaintainerDetail();
 
     expect(screen.getByRole("heading", { name: "Board maintainer" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Variables\s*1/ })).toBeInTheDocument();
-    expect(screen.queryByText("run_duplicate")).not.toBeInTheDocument();
-    expect(screen.queryByText("run_failed_without_session")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Sessions\s*1/ })).toBeInTheDocument();
+    expect(screen.queryByText("run_2")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Activity/ }));
-    expect(screen.getByRole("link", { name: /issue_comment.created/ })).toHaveAttribute(
-      "href",
-      "https://github.com/saltbo/slink/issues/42#issuecomment-12345",
-    );
-    expect(screen.getByText("dispatched")).toBeInTheDocument();
-    expect(screen.getAllByText("session_1").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("saltbo/slink Issue #42")).toBeInTheDocument();
+    expect(screen.getByText("gh-issue-comment-123")).toBeInTheDocument();
+    expect(screen.getByText("github")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("provider exited non-zero")).toBeInTheDocument();
+    expect(screen.getAllByText("machine-a").length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Sessions/ }));
+    expect(screen.getByText("github:saltbo/slink:issue:42")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Memory/ }));
-
     expect(screen.getAllByText("HEARTBEAT.md")[0]).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Checklist" })).toBeInTheDocument();
     expect(screen.getByText("Review open issues").closest("li")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("notes/2026-06-08.md"));
     expect(screen.getByText("Follow up later.")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: /Variables/ }));
-    expect(screen.getByText("GH_TOKEN")).toBeInTheDocument();
   });
 
-  it("shows the scheduler mode and opens trigger editing for the current maintainer", () => {
+  it("shows the runtime and opens trigger editing for the current maintainer", () => {
     renderMaintainerDetail();
 
-    expect(screen.getByText("local ak start")).toBeInTheDocument();
+    expect(screen.getByText("claude")).toBeInTheDocument();
+    expect(screen.getByText("GitHub events")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Edit triggers" }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("local ak start");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Trigger settings");
     expect(maintainerDialog).toHaveBeenLastCalledWith(
-      expect.objectContaining({ open: true, maintainer: expect.objectContaining({ scheduler_type: "local" }) }),
+      expect.objectContaining({ open: true, maintainer: expect.objectContaining({ runtime: "claude" }) }),
     );
   });
 });

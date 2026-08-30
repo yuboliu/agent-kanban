@@ -151,6 +151,7 @@ export const api = {
       ),
     maintainerRuns: (id: string, maintainerId: string, limit = 100) =>
       request<{ data: any[]; pagination: any }>("GET", `/boards/${id}/maintainers/${maintainerId}/runs?limit=${limit}`),
+    maintainerSessions: (id: string, maintainerId: string) => request<{ data: any[] }>("GET", `/boards/${id}/maintainers/${maintainerId}/sessions`),
     maintainerMemories: (id: string, maintainerId: string, limit = 100) =>
       request<{ data: any[]; pagination: any }>("GET", `/boards/${id}/maintainers/${maintainerId}/memories?limit=${limit}`),
     createMaintainer: (id: string, body: Record<string, unknown>) => request<any>("POST", `/boards/${id}/maintainers`, body),

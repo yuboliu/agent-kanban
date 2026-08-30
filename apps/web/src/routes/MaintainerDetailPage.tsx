@@ -1,42 +1,43 @@
-import { AK_ANNOTATION_KEY_SOURCE_EVENT, AK_ANNOTATION_KEY_SOURCE_URL, AK_LABEL_KEY_GITHUB_SUBJECT } from "@agent-kanban/shared";
-import { ArrowLeft, ExternalLink, FileText, KeyRound, Pencil, RefreshCw } from "lucide-react";
+import { ArrowLeft, FileText, Pencil, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Link, useParams } from "react-router-dom";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
 import { BoardMaintainerDialog } from "../components/BoardMaintainerDialog";
 import { Header } from "../components/Header";
 import { formatRelative } from "../components/TaskDetailFields";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Textarea } from "../components/ui/textarea";
-import {
-  useBoard,
-  useBoardMaintainer,
-  useBoardMaintainerMemories,
-  useBoardMaintainerRuns,
-  useBoardMaintainerVariables,
-  useUpdateBoardMaintainerVariables,
-} from "../hooks/useBoard";
+import { useBoard, useBoardMaintainer, useBoardMaintainerMemories, useBoardMaintainerRuns, useBoardMaintainerSessions } from "../hooks/useBoard";
+
+type MaintainerRunStatus = "queued" | "running" | "completed" | "failed" | "superseded";
 
 interface MaintainerRun {
   id: string;
-  scheduled_for: string | null;
-  heartbeat_at: string | null;
-  triggered_at: string | null;
-  status: "claimed" | "queued" | "dispatching" | "dispatched" | "failed";
+  trigger: "heartbeat" | "review" | "github";
+  idempotency_key: string;
+  routing_key: string | null;
+  status: MaintainerRunStatus;
+  machine_id: string | null;
   session_id: string | null;
-  error_message: string | null;
-  metadata: Record<string, unknown>;
-  created_at?: string;
-  updated_at?: string;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+interface MaintainerSession {
+  id: string;
+  routing_key: string;
+  status: "open" | "closed";
+  machine_id: string | null;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface MaintainerMemory {
@@ -48,36 +49,14 @@ interface MaintainerMemory {
   updated_at: string;
 }
 
-interface MaintainerVariable {
-  name: string;
-}
-
-interface GithubSubject {
-  event: string | null;
-  action: string | null;
-  repository: string | null;
-  repositoryUrl: string | null;
-  subjectType: "issue" | "pull" | null;
-  subjectNumber: number | null;
-  subjectTitle: string | null;
-  subjectUrl: string | null;
-}
-
 export function MaintainerDetailPage() {
   const { boardId, maintainerId } = useParams<{ boardId: string; maintainerId: string }>();
   const { board, loading: boardLoading } = useBoard(boardId);
   const { maintainer, loading: maintainerLoading, refresh: refreshMaintainer } = useBoardMaintainer(boardId, maintainerId);
   const { runs, loading: runsLoading, refresh: refreshRuns } = useBoardMaintainerRuns(boardId, maintainerId);
+  const { sessions, loading: sessionsLoading, refresh: refreshSessions } = useBoardMaintainerSessions(boardId, maintainerId);
   const { memories, loading: memoriesLoading, error: memoriesError, refresh: refreshMemories } = useBoardMaintainerMemories(boardId, maintainerId);
-  const {
-    variables,
-    loading: variablesLoading,
-    error: variablesError,
-    refresh: refreshVariables,
-  } = useBoardMaintainerVariables(boardId, maintainerId);
-  const updateVariables = useUpdateBoardMaintainerVariables(boardId, maintainerId);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [variablesDialogOpen, setVariablesDialogOpen] = useState(false);
   const [schedulerDialogOpen, setSchedulerDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -96,16 +75,7 @@ export function MaintainerDetailPage() {
   const selectedMemory = memories.find((memory: MaintainerMemory) => memory.path === selectedPath) ?? null;
 
   async function refreshAll() {
-    await Promise.all([refreshMaintainer(), refreshRuns(), refreshMemories(), refreshVariables()]);
-  }
-
-  async function saveVariables(nextVariables: Record<string, string>) {
-    try {
-      await updateVariables.mutateAsync(nextVariables);
-      setVariablesDialogOpen(false);
-    } catch (error) {
-      toast.error((error as Error).message || "Failed to save variables");
-    }
+    await Promise.all([refreshMaintainer(), refreshRuns(), refreshSessions(), refreshMemories()]);
   }
 
   return (
@@ -144,13 +114,12 @@ export function MaintainerDetailPage() {
         </div>
 
         <div className="grid gap-3 rounded-lg border border-border bg-surface-secondary p-3 sm:grid-cols-5">
-          <Metric label="Agent" value={maintainer.agent_id ?? "unbound"} />
+          <Metric label="Runtime" value={maintainer.runtime ?? "unset"} />
           <Metric label="Heartbeat" value={maintainer.heartbeat_enabled === false ? "off" : "on"} />
           <Metric label="Review events" value={maintainer.review_enabled === false ? "off" : "on"} />
-          <Metric label="Scheduler" value="local ak start" />
+          <Metric label="GitHub events" value={maintainer.github_events_enabled === true ? "on" : "off"} />
           <Metric label="Interval" value={formatInterval(maintainer.interval_seconds)} />
           <Metric label="Last run" value={maintainer.last_run_at ? formatRelative(maintainer.last_run_at) : "never"} />
-          <Metric label="Last session" value={maintainer.last_session_id ?? "none"} />
         </div>
 
         {maintainer.last_error_message ? (
@@ -163,9 +132,9 @@ export function MaintainerDetailPage() {
               Memory
               <span className="ml-1 text-content-tertiary">{memories.length}</span>
             </TabsTrigger>
-            <TabsTrigger value="variables" className="px-3 font-mono text-xs">
-              Variables
-              <span className="ml-1 text-content-tertiary">{variables.length}</span>
+            <TabsTrigger value="sessions" className="px-3 font-mono text-xs">
+              Sessions
+              <span className="ml-1 text-content-tertiary">{sessions.length}</span>
             </TabsTrigger>
             <TabsTrigger value="activity" className="px-3 font-mono text-xs">
               Activity
@@ -185,13 +154,8 @@ export function MaintainerDetailPage() {
             />
           </TabsContent>
 
-          <TabsContent value="variables">
-            <VariablesPanel
-              variables={variables as MaintainerVariable[]}
-              loading={variablesLoading}
-              error={variablesError}
-              onEdit={() => setVariablesDialogOpen(true)}
-            />
+          <TabsContent value="sessions">
+            <SessionsPanel sessions={sessions as MaintainerSession[]} loading={sessionsLoading} />
           </TabsContent>
 
           <TabsContent value="activity">
@@ -199,13 +163,6 @@ export function MaintainerDetailPage() {
           </TabsContent>
         </Tabs>
       </main>
-      <VariablesDialog
-        open={variablesDialogOpen}
-        variables={variables as MaintainerVariable[]}
-        saving={updateVariables.isPending}
-        onOpenChange={setVariablesDialogOpen}
-        onSave={saveVariables}
-      />
       <BoardMaintainerDialog
         boardId={boardId}
         maintainer={maintainer}
@@ -228,17 +185,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function VariablesPanel({
-  variables,
-  loading,
-  error,
-  onEdit,
-}: {
-  variables: MaintainerVariable[];
-  loading: boolean;
-  error: unknown;
-  onEdit: () => void;
-}) {
+function SessionsPanel({ sessions, loading }: { sessions: MaintainerSession[]; loading: boolean }) {
   if (loading) {
     return (
       <div className="space-y-2">
@@ -248,182 +195,44 @@ function VariablesPanel({
     );
   }
 
-  if (error) {
+  if (sessions.length === 0) {
     return (
-      <div className="rounded-lg border border-error/40 bg-error/10 px-3 py-3 text-sm text-error">
-        {(error as Error).message || "Failed to load variables"}
-      </div>
+      <p className="rounded-lg border border-border bg-surface-secondary px-3 py-8 text-center text-sm text-content-tertiary">No sessions yet.</p>
     );
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="font-mono text-xs font-medium uppercase tracking-[0.08em] text-content-secondary">User variables</h2>
-          <p className="mt-1 text-xs text-content-tertiary">Stored in the user-variables credential.</p>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={onEdit}>
-          <Pencil data-icon="inline-start" />
-          Edit
-        </Button>
-      </div>
-
-      {variables.length === 0 ? (
-        <button
-          type="button"
-          onClick={onEdit}
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-surface-secondary px-3 py-8 text-sm text-content-tertiary transition-colors hover:border-accent/40 hover:text-content-secondary"
-        >
-          <KeyRound className="size-4" />
-          No user variables.
-        </button>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-surface-secondary">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border bg-surface-secondary hover:bg-surface-secondary">
-                <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Name</TableHead>
-                <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Value</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {variables.map((variable) => (
-                <TableRow key={variable.name} className="border-border hover:bg-surface-tertiary">
-                  <TableCell className="px-3 py-2 font-mono text-xs text-content-primary">{variable.name}</TableCell>
-                  <TableCell className="px-3 py-2 font-mono text-xs text-content-tertiary">secret</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+    <div className="overflow-hidden rounded-lg border border-border bg-surface-secondary">
+      <Table>
+        <TableHeader>
+          <TableRow className="border-border bg-surface-secondary hover:bg-surface-secondary">
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Routing key</TableHead>
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Status</TableHead>
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Machine</TableHead>
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Last run</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sessions.map((session) => (
+            <TableRow key={session.id} className="border-border hover:bg-surface-tertiary">
+              <TableCell className="max-w-[360px] truncate px-3 py-2 font-mono text-xs text-content-primary" title={session.routing_key}>
+                {session.routing_key}
+              </TableCell>
+              <TableCell className="px-3 py-2">
+                <Badge variant={session.status === "open" ? "default" : "secondary"}>{session.status}</Badge>
+              </TableCell>
+              <TableCell className="max-w-[180px] truncate px-3 py-2 font-mono text-xs text-content-secondary" title={session.machine_id ?? ""}>
+                {session.machine_id ?? "none"}
+              </TableCell>
+              <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">
+                {session.last_run_at ? formatRelative(session.last_run_at) : "never"}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
-}
-
-function VariablesDialog({
-  open,
-  variables,
-  saving,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean;
-  variables: MaintainerVariable[];
-  saving: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSave: (variables: Record<string, string>) => Promise<void>;
-}) {
-  const [envText, setEnvText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setEnvText("");
-    setError(null);
-  }, [open]);
-
-  async function submit() {
-    try {
-      const nextVariables = parseEnvText(envText);
-      setError(null);
-      await onSave(nextVariables);
-    } catch (err) {
-      setError((err as Error).message || "Invalid variables");
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>User variables</DialogTitle>
-          <DialogDescription>Values are write-only. Saving updates the user-variables credential.</DialogDescription>
-        </DialogHeader>
-
-        <div className="grid gap-3">
-          {variables.length > 0 ? (
-            <div className="rounded-lg border border-border bg-surface-secondary px-3 py-2">
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-content-tertiary">Current keys</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {variables.map((variable) => (
-                  <span
-                    key={variable.name}
-                    className="rounded border border-border bg-surface-primary px-1.5 py-0.5 font-mono text-[11px] text-content-secondary"
-                  >
-                    {variable.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="grid gap-2">
-            <Label htmlFor="maintainer-user-variables">Variables</Label>
-            <Textarea
-              id="maintainer-user-variables"
-              value={envText}
-              onChange={(event) => setEnvText(event.target.value)}
-              spellCheck={false}
-              className="min-h-48 font-mono text-xs"
-              placeholder={"GH_TOKEN=...\nFEATURE_FLAG=true"}
-            />
-          </div>
-
-          {error ? <p className="text-sm text-error">{error}</p> : null}
-        </div>
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={submit} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-const ENV_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function parseEnvText(text: string): Record<string, string> {
-  const variables: Record<string, string> = {};
-  const lines = text.split(/\r?\n/);
-  for (const [index, rawLine] of lines.entries()) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const assignment = line.startsWith("export ") ? line.slice("export ".length).trim() : line;
-    const separator = assignment.indexOf("=");
-    if (separator <= 0) {
-      throw new Error(`Line ${index + 1} must be NAME=value`);
-    }
-    const name = assignment.slice(0, separator).trim();
-    const rawValue = assignment.slice(separator + 1).trim();
-    if (!ENV_VARIABLE_NAME_PATTERN.test(name)) {
-      throw new Error(`Invalid variable name on line ${index + 1}`);
-    }
-    if (Object.hasOwn(variables, name)) {
-      throw new Error(`Duplicate variable ${name}`);
-    }
-    const value = unquoteEnvValue(rawValue);
-    if (!value) {
-      throw new Error(`${name} cannot be empty`);
-    }
-    variables[name] = value;
-  }
-  if (Object.keys(variables).length === 0) {
-    throw new Error("At least one variable is required");
-  }
-  return variables;
-}
-
-function unquoteEnvValue(value: string): string {
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1);
-  return value;
 }
 
 function ActivityPanel({ runs, loading }: { runs: MaintainerRun[]; loading: boolean }) {
@@ -448,34 +257,35 @@ function ActivityPanel({ runs, loading }: { runs: MaintainerRun[]; loading: bool
         <TableHeader>
           <TableRow className="border-border bg-surface-secondary hover:bg-surface-secondary">
             <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Subject</TableHead>
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Event</TableHead>
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Trigger</TableHead>
             <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Status</TableHead>
-            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Session</TableHead>
+            <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Machine</TableHead>
             <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Time</TableHead>
             <TableHead className="px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-content-tertiary">Error</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {runs.map((run) => {
-            const github = githubSubjectFromMetadata(run.metadata);
+            const subject = githubSubjectFromRoutingKey(run.routing_key);
             return (
               <TableRow key={run.id} className="border-border hover:bg-surface-tertiary">
-                <TableCell className="max-w-[360px] px-3 py-2" title={run.id}>
-                  <GithubSubjectLink subject={github} fallback={run.id} />
+                <TableCell className="max-w-[360px] px-3 py-2" title={run.routing_key ?? run.id}>
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-xs text-content-secondary">{subject ?? run.routing_key ?? run.id}</div>
+                    <div className="mt-0.5 truncate font-mono text-[10px] text-content-tertiary">{run.idempotency_key}</div>
+                  </div>
                 </TableCell>
-                <TableCell className="px-3 py-2">
-                  <RunEventLink run={run} github={github} />
-                </TableCell>
+                <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">{run.trigger}</TableCell>
                 <TableCell className="px-3 py-2">
                   <Badge variant={runStatusBadgeVariant(run.status)}>{run.status}</Badge>
                 </TableCell>
-                <TableCell className="max-w-[180px] truncate px-3 py-2 font-mono text-xs text-content-secondary" title={run.session_id ?? ""}>
-                  {run.session_id ?? "none"}
+                <TableCell className="max-w-[180px] truncate px-3 py-2 font-mono text-xs text-content-secondary" title={run.machine_id ?? ""}>
+                  {run.machine_id ?? "none"}
                 </TableCell>
                 <TableCell className="px-3 py-2 font-mono text-xs text-content-secondary">
                   {runTimestamp(run) ? formatRelative(runTimestamp(run)!) : "unknown"}
                 </TableCell>
-                <TableCell className="max-w-[220px] truncate px-3 py-2 text-xs text-error">{run.error_message ?? ""}</TableCell>
+                <TableCell className="max-w-[220px] truncate px-3 py-2 text-xs text-error">{run.error ?? ""}</TableCell>
               </TableRow>
             );
           })}
@@ -485,10 +295,11 @@ function ActivityPanel({ runs, loading }: { runs: MaintainerRun[]; loading: bool
   );
 }
 
-function runStatusBadgeVariant(status: MaintainerRun["status"]): "default" | "secondary" | "destructive" | "outline" {
+function runStatusBadgeVariant(status: MaintainerRunStatus): "default" | "secondary" | "destructive" | "outline" {
   if (status === "failed") return "destructive";
-  if (status === "dispatching") return "default";
-  if (status === "dispatched") return "outline";
+  if (status === "running") return "default";
+  if (status === "completed") return "outline";
+  if (status === "superseded") return "secondary";
   return "secondary";
 }
 
@@ -596,129 +407,18 @@ function formatInterval(seconds: number) {
   return `${seconds}s`;
 }
 
-function runEvent(run: MaintainerRun, github: GithubSubject | null) {
-  if (github?.event) return github.action ? `${github.event}.${github.action}` : github.event;
-  if (run.scheduled_for || run.heartbeat_at) return "scheduled";
-  const event = run.metadata?.event;
-  return typeof event === "string" ? event : "event";
-}
-
-function RunEventLink({ run, github }: { run: MaintainerRun; github: GithubSubject | null }) {
-  const label = runEvent(run, github);
-  const url = runSourceUrl(run);
-  if (!url) return <span className="font-mono text-xs text-content-secondary">{label}</span>;
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-accent hover:underline"
-      title={url}
-    >
-      <span className="truncate">{label}</span>
-      <ExternalLink className="size-3 shrink-0 text-content-tertiary" />
-    </a>
-  );
-}
-
-function runSourceUrl(run: MaintainerRun): string | null {
-  const metadataObject = objectValue(run.metadata);
-  const sessionMetadata = objectValue(metadataObject?.sessionMetadata);
-  return metadataString(metadataObject, sessionMetadata, "annotation", AK_ANNOTATION_KEY_SOURCE_URL);
-}
-
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function githubSubjectFromMetadata(metadata: Record<string, unknown> | undefined): GithubSubject | null {
-  const metadataObject = objectValue(metadata);
-  const sessionMetadata = objectValue(metadataObject?.sessionMetadata);
-  const sessionKey = metadataString(metadataObject, sessionMetadata, "label", AK_LABEL_KEY_GITHUB_SUBJECT);
-  const subject = sessionKey ? githubSubjectFromSessionKey(sessionKey) : null;
-  if (!subject) return null;
-  return {
-    ...subject,
-    event: metadataString(metadataObject, sessionMetadata, "annotation", AK_ANNOTATION_KEY_SOURCE_EVENT),
-    action: null,
-  };
-}
-
-function metadataString(
-  metadata: Record<string, unknown> | null,
-  sessionMetadata: Record<string, unknown> | null,
-  source: "label" | "annotation",
-  key: string,
-): string | null {
-  const collectionName = source === "label" ? "labels" : "annotations";
-  const metadataCollection = objectValue(metadata?.[collectionName]);
-  const sessionCollection = objectValue(sessionMetadata?.[collectionName]);
-  return (
-    stringValue(metadata?.[key]) ??
-    stringValue(metadataCollection?.[key]) ??
-    stringValue(sessionMetadata?.[key]) ??
-    stringValue(sessionCollection?.[key])
-  );
-}
-
-function githubSubjectFromSessionKey(sessionKey: string): GithubSubject | null {
-  const match = /^github:([^:]+):(issue|pull):(\d+)$/.exec(sessionKey);
+function githubSubjectFromRoutingKey(routingKey: string | null): string | null {
+  if (!routingKey) return null;
+  const match = /^github:([^:]+):(issue|pull):(\d+)$/.exec(routingKey);
   if (!match) return null;
   const repository = match[1];
-  const subjectType = match[2] as "issue" | "pull";
-  const subjectNumber = Number.parseInt(match[3], 10);
-  const subjectPath = subjectType === "pull" ? "pull" : "issues";
-  return {
-    event: null,
-    action: null,
-    repository,
-    repositoryUrl: `https://github.com/${repository}`,
-    subjectType,
-    subjectNumber,
-    subjectTitle: null,
-    subjectUrl: `https://github.com/${repository}/${subjectPath}/${subjectNumber}`,
-  };
-}
-
-function githubSubjectLabel(subject: GithubSubject | null, fallback: string) {
-  if (!subject) return fallback;
-  const number = subject.subjectNumber === null ? "" : `#${subject.subjectNumber}`;
-  const repo = subject.repository ?? "GitHub";
-  const kind = subject.subjectType === "pull" ? "PR" : subject.subjectType === "issue" ? "Issue" : "Item";
-  return `${repo} ${kind} ${number}`.trim();
-}
-
-function GithubSubjectLink({ subject, fallback, compact = false }: { subject: GithubSubject | null; fallback: string; compact?: boolean }) {
-  const label = githubSubjectLabel(subject, fallback);
-  const title = subject?.subjectTitle;
-  if (!subject?.subjectUrl) {
-    return (
-      <div className="min-w-0">
-        <div className={`truncate font-mono ${compact ? "text-[11px]" : "text-xs"} text-content-secondary`}>{label}</div>
-        {title && !compact ? <div className="mt-0.5 truncate text-xs text-content-tertiary">{title}</div> : null}
-      </div>
-    );
-  }
-  return (
-    <a
-      href={subject.subjectUrl}
-      target="_blank"
-      rel="noreferrer"
-      className={`inline-flex min-w-0 max-w-full items-center gap-1 font-mono ${compact ? "text-[11px]" : "text-xs"} text-accent hover:underline`}
-      title={title ?? subject.subjectUrl}
-    >
-      <span className="truncate">{label}</span>
-      <ExternalLink className="size-3 shrink-0 text-content-tertiary" />
-    </a>
-  );
+  const subjectType = match[2];
+  const subjectNumber = match[3];
+  return `${repository} ${subjectType === "pull" ? "PR" : "Issue"} #${subjectNumber}`;
 }
 
 function runTimestamp(run: MaintainerRun): string | null {
-  return run.heartbeat_at ?? run.triggered_at ?? run.created_at ?? null;
+  return run.started_at ?? run.created_at ?? null;
 }
 
 function formatDate(value: string) {

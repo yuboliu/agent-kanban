@@ -137,6 +137,20 @@ export function useBoardMaintainerRuns(boardId: string | undefined, maintainerId
   return { runs: data.data, pagination: data.pagination, loading, refresh: refetch };
 }
 
+export function useBoardMaintainerSessions(boardId: string | undefined, maintainerId: string | undefined) {
+  const {
+    data = { data: [] },
+    isLoading: loading,
+    refetch,
+  } = useQuery({
+    queryKey: ["board-maintainer-sessions", boardId, maintainerId],
+    queryFn: () => api.boards.maintainerSessions(boardId!, maintainerId!),
+    enabled: !!boardId && !!maintainerId,
+  });
+
+  return { sessions: data.data, loading, refresh: refetch };
+}
+
 export function useBoardMaintainerMemories(boardId: string | undefined, maintainerId: string | undefined) {
   const {
     data = { data: [], pagination: { limit: 100, hasMore: false } },

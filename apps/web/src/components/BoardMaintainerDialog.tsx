@@ -1,9 +1,7 @@
-import { MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS, MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS } from "@agent-kanban/shared";
-import { useQuery } from "@tanstack/react-query";
+import { MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS, MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS, RUNTIME_LABELS } from "@agent-kanban/shared";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useCreateBoardMaintainer, useUpdateBoardMaintainer } from "../hooks/useBoard";
-import { api } from "../lib/api";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -13,17 +11,13 @@ import { Switch } from "./ui/switch";
 interface BoardMaintainer {
   id: string;
   agent_id?: string;
+  runtime?: string;
+  model?: string | null;
   interval_seconds: number;
   heartbeat_enabled?: boolean;
   review_enabled?: boolean;
+  github_events_enabled?: boolean;
   scheduler_type?: "local";
-}
-
-interface MaintainerAgent {
-  id: string;
-  name?: string;
-  username?: string;
-  role?: string;
 }
 
 interface BoardMaintainerDialogProps {
@@ -33,33 +27,33 @@ interface BoardMaintainerDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const WORKER_RUNTIMES = ["claude", "codex", "gemini", "copilot", "hermes"] as const;
+
 export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange }: BoardMaintainerDialogProps) {
   const isEditing = !!maintainer;
   const createMaintainer = useCreateBoardMaintainer(boardId);
   const updateMaintainer = useUpdateBoardMaintainer(boardId);
-  const agentQuery = useQuery({
-    queryKey: ["agents", { kind: "worker", maintainer: true }],
-    queryFn: () => api.agents.list({ kind: "worker", maintainer: "true" }),
-    enabled: open && !isEditing,
-  });
-  const [agentId, setAgentId] = useState("");
+  const [runtime, setRuntime] = useState<string>("claude");
+  const [model, setModel] = useState("");
   const [intervalSeconds, setIntervalSeconds] = useState(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
   const [reviewEnabled, setReviewEnabled] = useState(true);
+  const [githubEventsEnabled, setGithubEventsEnabled] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setAgentId(maintainer?.agent_id ?? "");
+    setRuntime(maintainer?.runtime ?? "claude");
+    setModel(maintainer?.model ?? "");
     setIntervalSeconds(String(maintainer?.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
     setHeartbeatEnabled(maintainer?.heartbeat_enabled ?? true);
     setReviewEnabled(maintainer?.review_enabled ?? true);
+    setGithubEventsEnabled(maintainer?.github_events_enabled ?? false);
   }, [open, maintainer?.id]);
 
-  const agents = (agentQuery.data ?? []) as MaintainerAgent[];
   const pending = createMaintainer.isPending || updateMaintainer.isPending;
 
   async function save() {
-    if (!heartbeatEnabled && !reviewEnabled) {
+    if (!heartbeatEnabled && !reviewEnabled && !githubEventsEnabled) {
       toast.error("Enable at least one trigger mode");
       return;
     }
@@ -70,24 +64,20 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
     }
     const savedInterval =
       Number.isInteger(seconds) && seconds >= MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS ? seconds : MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
+    const body = {
+      runtime,
+      ...(model.trim() ? { model: model.trim() } : {}),
+      interval_seconds: savedInterval,
+      heartbeat_enabled: heartbeatEnabled,
+      review_enabled: reviewEnabled,
+      github_events_enabled: githubEventsEnabled,
+    };
     try {
       if (maintainer) {
-        await updateMaintainer.mutateAsync({
-          maintainerId: maintainer.id,
-          body: { interval_seconds: savedInterval, heartbeat_enabled: heartbeatEnabled, review_enabled: reviewEnabled },
-        });
+        await updateMaintainer.mutateAsync({ maintainerId: maintainer.id, body });
         toast.success("Maintainer updated");
       } else {
-        if (!agentId) {
-          toast.error("Agent is required");
-          return;
-        }
-        await createMaintainer.mutateAsync({
-          agent_id: agentId,
-          interval_seconds: savedInterval,
-          heartbeat_enabled: heartbeatEnabled,
-          review_enabled: reviewEnabled,
-        });
+        await createMaintainer.mutateAsync(body);
         toast.success("Maintainer created");
       }
       onOpenChange(false);
@@ -102,30 +92,37 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit maintainer" : "Add maintainer"}</DialogTitle>
           <DialogDescription>
-            Choose how this maintainer is triggered. Local schedules use <code>ak start</code>.
+            Runs as the tenant built-in Local Maintainer agent under <code>ak start</code>.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          {!isEditing && (
-            <div className="space-y-1.5">
-              <Label htmlFor="maintainer-agent">Agent</Label>
-              <select
-                id="maintainer-agent"
-                value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm text-content-primary"
-              >
-                <option value="">Select an agent</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name ?? agent.username ?? agent.id}
-                    {agent.role ? ` (${agent.role})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="maintainer-runtime">Runtime</Label>
+            <select
+              id="maintainer-runtime"
+              value={runtime}
+              onChange={(event) => setRuntime(event.target.value)}
+              className="h-9 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm text-content-primary"
+            >
+              {WORKER_RUNTIMES.map((name) => (
+                <option key={name} value={name}>
+                  {RUNTIME_LABELS[name]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="maintainer-model">Model (optional)</Label>
+            <Input
+              id="maintainer-model"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="Use provider default"
+              disabled={pending}
+            />
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="maintainer-interval">Interval seconds</Label>
@@ -153,6 +150,14 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
               <p className="mt-0.5 text-xs text-content-tertiary">Run a periodic health and backlog review.</p>
             </div>
             <Switch id="maintainer-heartbeat" checked={heartbeatEnabled} onCheckedChange={setHeartbeatEnabled} disabled={pending} />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-primary px-3 py-2">
+            <div className="min-w-0">
+              <Label htmlFor="maintainer-github-events">GitHub events</Label>
+              <p className="mt-0.5 text-xs text-content-tertiary">React to issue/PR events from the linked repository (requires GitHub App).</p>
+            </div>
+            <Switch id="maintainer-github-events" checked={githubEventsEnabled} onCheckedChange={setGithubEventsEnabled} disabled={pending} />
           </div>
         </div>
 
