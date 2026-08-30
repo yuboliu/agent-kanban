@@ -640,7 +640,12 @@ api.get("/api/ping", (c) => c.json({ pong: true }));
 
 api.post("/api/webhooks/github-app", async (c) => {
   const secret = c.env.GITHUB_APP_WEBHOOK_SECRET;
-  if (!secret) throw new HTTPException(503, { message: "GitHub App webhook is not configured" });
+  if (!secret) {
+    // Stable disabled state (stage 6): return 2xx so GitHub does not treat the
+    // unconfigured receiver as a delivery failure and retry/back off. No
+    // network calls are made when the App is not configured.
+    return c.json({ ok: true, handled: false, disabled: true, reason: "GitHub App webhook is not configured" });
+  }
   const signature = c.req.header("x-hub-signature-256");
   const body = await c.req.text();
   if (!signature || !(await verifyGithubSignature(secret, body, signature))) {
@@ -2294,8 +2299,9 @@ api.get("/api/github-app/setup", async (c) => {
 // stored tables instead and never calls GitHub.
 api.get("/api/github-app/repositories", async (c) => {
   const ownerId = c.get("ownerId");
+  if (!isGithubAppConfigured(c.env)) return c.json({ configured: false, installed: false, repositories: [] });
   const installs = (await getInstallationsForOwner(c.env.DB, ownerId)).filter((i) => i.suspendedAt === null);
-  if (installs.length === 0) return c.json({ installed: false, repositories: [] });
+  if (installs.length === 0) return c.json({ configured: true, installed: false, repositories: [] });
 
   const existingUrls = new Set((await listRepositories(c.env.DB, ownerId)).map((r) => r.url));
   const lists = await Promise.all(installs.map((install) => listInstallationRepositories(c.env, install.installationId)));
