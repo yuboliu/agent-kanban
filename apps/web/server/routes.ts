@@ -2547,8 +2547,11 @@ api.get("/api/skills/builtin", async (c) => {
 // the owner published in the UI, scoped to the caller's tenant.
 api.get("/api/skills/by-name/:name/content", async (c) => {
   const skill = await getSkillByName(c.env.DB, c.req.param("name"), c.get("ownerId"));
-  if (!skill) throw new HTTPException(404, { message: "Skill not found" });
-  return c.json({ name: skill.name, description: skill.description, body: skill.body });
+  if (skill) return c.json({ name: skill.name, description: skill.description, body: skill.body, files: {} });
+  // Built-in baseline fallback (e.g. the fixed ak@ak-maintainer skill).
+  const builtin = (await readBuiltinSkills()).find((candidate) => candidate.name === c.req.param("name"));
+  if (builtin) return c.json(builtin);
+  throw new HTTPException(404, { message: "Skill not found" });
 });
 
 api.get("/api/skills/:id", async (c) => {

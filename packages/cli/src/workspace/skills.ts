@@ -13,7 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { isAkSkillRef, isValidSkillRef } from "@agent-kanban/shared";
 import { createLogger } from "../logger.js";
@@ -59,7 +59,7 @@ export interface SkillSnapshot {
 
 /** Minimal client surface needed to resolve `ak@<name>` refs. */
 export interface SkillContentFetcher {
-  getSkillContent(name: string): Promise<{ name: string; description: string; body: string }>;
+  getSkillContent(name: string): Promise<{ name: string; description: string; body: string; files?: Record<string, string> }>;
 }
 
 const failedUntil = new Map<string, number>();
@@ -294,6 +294,12 @@ async function installAkSkillIntoCache(ref: string, skill: string, client: Skill
     const dir = join(staging, ".agents", "skills", skill);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), buildAkSkillMarkdown(skill, content.description, content.body));
+    // Full skill tree: references/, agents/, examples/ — not just SKILL.md.
+    for (const [relPath, fileContent] of Object.entries(content.files ?? {})) {
+      const filePath = join(dir, relPath);
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, fileContent);
+    }
     return publishStagedSkill(ref, "ak", skill, staging, previous);
   } catch (err) {
     return installFailure(ref, previous, err);

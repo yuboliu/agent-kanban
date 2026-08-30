@@ -1,8 +1,17 @@
 /// <reference types="vite/client" />
-// Built-in skills ship with the repository under skills/<name>/SKILL.md.
-// Primary source: vite bundles them as raw strings at build time — this works
-// inside workerd (virtual /bundle fs, real host paths unreadable) and on
-// Cloudflare deploys. Fallback: fs read for plain-node self-hosted servers.
+// Built-in skills ship with the repository under skills/<name>/SKILL.md plus
+// supporting files (references/, agents/, examples/). Primary source: vite
+// bundles them as raw strings at build time — this works inside workerd
+// (virtual /bundle fs, real host paths unreadable) and on Cloudflare deploys.
+// Fallback: fs read for plain-node self-hosted servers.
+
+export interface BuiltinSkill {
+  name: string;
+  description: string;
+  body: string;
+  /** Relative path (e.g. "references/foo.md") → UTF-8 content. Includes SKILL.md? No — body is SKILL.md. */
+  files: Record<string, string>;
+}
 
 // Tolerant frontmatter reader: inline `key: value` and `key: |` block scalars.
 export function parseSkillFrontmatter(raw: string, fallbackName: string): { name: string; description: string } {
@@ -39,7 +48,7 @@ const BUNDLED_SKILLS: Record<string, string> = (() => {
   try {
     const glob = (import.meta as { glob?: unknown }).glob;
     if (typeof glob !== "function") return {};
-    return glob("../../../skills/*/SKILL.md", {
+    return glob("../../../skills/*/**/*", {
       query: "?raw",
       import: "default",
       eager: true,
@@ -49,20 +58,46 @@ const BUNDLED_SKILLS: Record<string, string> = (() => {
   }
 })();
 
-function skillsFromBundle(bundled: Record<string, string>): { name: string; description: string; body: string }[] {
-  const skills = Object.entries(bundled).map(([path, raw]) => {
-    const dirName = path.split("/").slice(-2)[0] ?? path;
-    const { name, description } = parseSkillFrontmatter(raw, dirName);
-    return { name, description, body: raw };
-  });
+function skillDirName(path: string): string | null {
+  const parts = path.split("/");
+  // path is like "../../../skills/<name>/<rel...>"
+  const skillsIndex = parts.lastIndexOf("skills");
+  if (skillsIndex === -1 || skillsIndex + 1 >= parts.length) return null;
+  return parts[skillsIndex + 1];
+}
+
+function relativeSkillPath(path: string): string {
+  const parts = path.split("/");
+  const skillsIndex = parts.lastIndexOf("skills");
+  return parts.slice(skillsIndex + 2).join("/");
+}
+
+function skillsFromBundle(bundled: Record<string, string>): BuiltinSkill[] {
+  const byDir = new Map<string, { body: string; files: Record<string, string> }>();
+  for (const [path, raw] of Object.entries(bundled)) {
+    const dir = skillDirName(path);
+    if (!dir) continue;
+    const rel = relativeSkillPath(path);
+    if (!rel) continue;
+    const entry = byDir.get(dir) ?? { body: "", files: {} };
+    if (rel === "SKILL.md") entry.body = raw;
+    else entry.files[rel] = raw;
+    byDir.set(dir, entry);
+  }
+  const skills: BuiltinSkill[] = [];
+  for (const [dir, entry] of byDir.entries()) {
+    if (!entry.body) continue;
+    const { name, description } = parseSkillFrontmatter(entry.body, dir);
+    skills.push({ name, description, body: entry.body, files: entry.files });
+  }
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // fs fallback: plain-node self-hosted servers (no vite bundling).
-export async function listBuiltinSkills(): Promise<{ name: string; description: string; body: string }[]> {
+export async function listBuiltinSkills(): Promise<BuiltinSkill[]> {
   try {
-    const { readdir, readFile } = await import("node:fs/promises");
-    const { join, resolve } = await import("node:path");
+    const { readdir, readFile, stat } = await import("node:fs/promises");
+    const { join, resolve, sep, relative } = await import("node:path");
     const candidates = [resolve(process.cwd(), "skills"), resolve(process.cwd(), "..", "..", "skills")];
     let skillsDir: string | null = null;
     for (const candidate of candidates) {
@@ -76,14 +111,31 @@ export async function listBuiltinSkills(): Promise<{ name: string; description: 
     }
     if (!skillsDir) return [];
     const entries = await readdir(skillsDir, { withFileTypes: true });
-    const skills: { name: string; description: string; body: string }[] = [];
+    const skills: BuiltinSkill[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      const skillRoot = join(skillsDir, entry.name);
       try {
-        const raw = await readFile(join(skillsDir, entry.name, "SKILL.md"), "utf8");
-        const { name, description } = parseSkillFrontmatter(raw, entry.name);
-        skills.push({ name, description, body: raw });
-      } catch {}
+        const body = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+        const { name, description } = parseSkillFrontmatter(body, entry.name);
+        const files: Record<string, string> = {};
+        const walk = async (dir: string): Promise<void> => {
+          const children = await readdir(dir, { withFileTypes: true });
+          for (const child of children) {
+            const childPath = join(dir, child.name);
+            if (child.isDirectory()) {
+              await walk(childPath);
+            } else if (child.isFile() && child.name !== "SKILL.md") {
+              const relPath = relative(skillRoot, childPath).split(sep).join("/");
+              files[relPath] = await readFile(childPath, "utf8");
+            }
+          }
+        };
+        await walk(skillRoot);
+        skills.push({ name, description, body, files });
+      } catch {
+        // skip malformed skill dirs
+      }
     }
     return skills.sort((a, b) => a.name.localeCompare(b.name));
   } catch {
@@ -94,7 +146,7 @@ export async function listBuiltinSkills(): Promise<{ name: string; description: 
 
 // Route handler entry point: prefer the build-time bundle (workerd/CF), fall
 // back to fs for plain-node self-hosted servers.
-export async function readBuiltinSkills(): Promise<{ name: string; description: string; body: string }[]> {
+export async function readBuiltinSkills(): Promise<BuiltinSkill[]> {
   const bundled = skillsFromBundle(BUNDLED_SKILLS);
   if (bundled.length > 0) return bundled;
   return listBuiltinSkills();
