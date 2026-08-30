@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const home = homedir();
-const workerWorkspace = process.env.AK_WORKSPACE_DIR || (process.env.AK_WORKER === "1" && process.env.AMA_WORKSPACE ? process.env.AMA_WORKSPACE : "");
+const workerWorkspace = process.env.AK_WORKSPACE_DIR || "";
 const workerAkDir = workerWorkspace ? join(workerWorkspace, ".ak") : "";
 
 export const CONFIG_DIR = process.env.XDG_CONFIG_HOME

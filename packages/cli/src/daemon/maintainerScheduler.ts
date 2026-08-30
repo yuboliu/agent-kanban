@@ -14,7 +14,7 @@ interface LocalMaintainer {
   heartbeat_enabled: boolean;
   review_enabled: boolean;
   status: "active" | "paused" | "archived";
-  scheduler_type: "local" | "ama";
+  scheduler_type: "local";
   created_at: string;
 }
 

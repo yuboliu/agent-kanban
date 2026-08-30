@@ -180,18 +180,7 @@ afterEach(() => {
 
 describe("RuntimePool provider environment", () => {
   it("removes control-plane secrets while retaining agent and provider credentials", async () => {
-    const controlPlaneKeys = [
-      "AK_API_KEY",
-      "AMA_TOKEN",
-      "AMA_RUNNER_CONFIG",
-      "AMA_RUNNER_CREDENTIALS",
-      "AMA_OIDC_CLIENT_SECRET",
-      "OIDC_CLIENT_SECRET",
-      "CLOUDFLARE_API_TOKEN",
-      "CLOUDFLARE_API_KEY",
-      "CF_API_TOKEN",
-      "CF_API_KEY",
-    ];
+    const controlPlaneKeys = ["AK_API_KEY", "OIDC_CLIENT_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_TOKEN", "CF_API_KEY"];
     for (const key of controlPlaneKeys) vi.stubEnv(key, `machine-${key}`);
     vi.stubEnv("ANTHROPIC_API_KEY", "provider-credential");
 

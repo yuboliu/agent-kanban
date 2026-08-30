@@ -29,9 +29,7 @@ vi.mock("node:fs", async () => {
 });
 
 const testSessionsDir = join(tmpdir(), `ak-start-command-test-${randomUUID()}`);
-const testRunnerBin = join(testSessionsDir, "runners", "ama-runner");
 let localSpawnBehavior: "ready" | "error" | "exit" | "manual" = "ready";
-let amaSpawnBehavior: "spawn" | "manual" = "spawn";
 let lastSpawnChild:
   | (EventEmitter & {
       pid: number;
@@ -67,45 +65,15 @@ const spawnMock = vi.fn((command: string, args: string[], options: { env?: Recor
       if (localSpawnBehavior === "ready") child.emit("message", { type: "ready", machineId: "machine_local" });
       if (localSpawnBehavior === "error") child.emit("error", new Error("local spawn failed"));
       if (localSpawnBehavior === "exit") child.emit("exit", 1, null);
-      return;
     }
-    if (amaSpawnBehavior === "spawn") child.emit("spawn");
   });
   return child;
 });
-const spawnSyncMock = vi.fn(() => ({ status: 0 }));
 
-vi.mock("node:child_process", () => ({ spawn: spawnMock, spawnSync: spawnSyncMock }));
-vi.mock("../src/amaRunner.js", () => ({
-  resolveAmaRunnerBinary: vi.fn(async () => ({
-    path: testRunnerBin,
-    version: { name: "ama-runner", version: "0.1.0", commit: "test-commit", buildDate: "test-build" },
-  })),
-}));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../src/providers/registry.js", () => ({ getAvailableProviders: () => [{ name: "codex" }] }));
 vi.mock("../src/device.js", () => ({ generateDeviceId: () => "device-test" }));
 vi.mock("../src/machineName.js", () => ({ resolveMachineName: () => "test-machine" }));
-
-function mockMachineRunnerFetch(origin = "https://runner-control.test") {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "https://ak.test/api/machines") {
-      return new Response(
-        JSON.stringify({
-          id: "machine_1",
-          name: "test-machine",
-          runner: {
-            origin,
-            projectId: "project_1",
-            environmentId: "env_1",
-          },
-        }),
-        { status: 201, headers: { "content-type": "application/json" } },
-      );
-    }
-    throw new Error(`Unexpected fetch: ${url}`);
-  });
-}
 
 vi.mock("../src/paths.js", async () => {
   const actual = await vi.importActual<typeof import("../src/paths.js")>("../src/paths.js");
@@ -124,14 +92,8 @@ vi.mock("../src/paths.js", async () => {
 });
 
 const { clearAllSessions } = await import("../src/session/store.js");
-const {
-  readLastLogLines,
-  registerRestartCommand: registerRestartCommandSource,
-  registerStartCommand: registerStartCommandSource,
-  registerStatusCommand,
-  registerStopCommand,
-  registerLogsCommand,
-} = await import("../src/commands/start.js");
+const { readLastLogLines, registerRestartCommand, registerStartCommand, registerStatusCommand, registerStopCommand, registerLogsCommand } =
+  await import("../src/commands/start.js");
 const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 const stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
 
@@ -155,40 +117,6 @@ function _setTTY(stdin: boolean, stdout: boolean): void {
   Object.defineProperty(process.stdout, "isTTY", { value: stdout, configurable: true });
 }
 
-const credentialsFilePath = join(testSessionsDir, "ama-runner-credentials.json");
-const legacyLoginFilePath = join(testSessionsDir, "ama-runner-login.json");
-
-// Most historical tests in this file exercise AMA runner onboarding. Keep that
-// coverage explicit now that the product default is the local daemon.
-function registerStartCommand(program: Command): void {
-  registerStartCommandSource(program);
-  program.commands.find((command) => command.name() === "start")?.setOptionValueWithSource("mode", "ama", "default");
-}
-
-function registerRestartCommand(program: Command): void {
-  registerRestartCommandSource(program);
-  program.commands.find((command) => command.name() === "restart")?.setOptionValueWithSource("mode", "ama", "default");
-}
-
-function writeCredentialStore(profile: { apiServer: string; accessToken?: string; refreshToken?: string; expiresAt?: string; accountId?: string }) {
-  const accountId = profile.accountId ?? "account_1";
-  writeFileSync(
-    credentialsFilePath,
-    JSON.stringify({
-      active: `${profile.apiServer.replace(/\/$/, "")}#${accountId}`,
-      profiles: [
-        {
-          accountId,
-          apiServer: profile.apiServer,
-          accessToken: profile.accessToken ?? "x",
-          ...(profile.refreshToken ? { refreshToken: profile.refreshToken } : {}),
-          ...(profile.expiresAt ? { expiresAt: profile.expiresAt } : {}),
-        },
-      ],
-    }),
-  );
-}
-
 beforeEach(() => {
   mkdirSync(testSessionsDir, { recursive: true });
   // Isolate from the host environment: useEnvironmentCredentials() falls back
@@ -197,15 +125,12 @@ beforeEach(() => {
   vi.stubEnv("AK_API_URL", "");
   vi.stubEnv("AK_API_KEY", "");
   localSpawnBehavior = "ready";
-  amaSpawnBehavior = "spawn";
   lastSpawnChild = undefined;
   spawnedChildren.length = 0;
   fsHarness.closedFds.length = 0;
   spawnMock.mockClear();
   startupLock.lock.mockReset();
   startupLock.lock.mockImplementation(async () => vi.fn(async () => {}));
-  spawnSyncMock.mockClear();
-  spawnSyncMock.mockReturnValue({ status: 0 });
 });
 
 afterEach(() => {
@@ -221,9 +146,9 @@ afterEach(() => {
 });
 
 describe("start runtime command", () => {
-  it("defaults to the local daemon, registers the machine, and skips AMA onboarding", async () => {
+  it("starts the local daemon with parsed options", async () => {
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
@@ -233,7 +158,6 @@ describe("start runtime command", () => {
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(spawnSyncMock).not.toHaveBeenCalled();
     expect(spawnMock).toHaveBeenCalledWith(
       process.execPath,
       [process.argv[1], "__daemon", "--max-concurrent", "5", "--poll-interval", "5000", "--task-timeout", "60000"],
@@ -241,7 +165,6 @@ describe("start runtime command", () => {
     );
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Local machine runner started"));
     expect(JSON.parse(readFileSync(join(testSessionsDir, "daemon-state.json"), "utf-8"))).toMatchObject({
-      runtime: "local-daemon",
       machineId: "machine_local",
       pollInterval: 5000,
       taskTimeout: 60000,
@@ -249,53 +172,25 @@ describe("start runtime command", () => {
   });
 
   it("does not pass control-plane secrets to the local daemon process", async () => {
-    for (const key of [
-      "AK_API_KEY",
-      "AMA_TOKEN",
-      "AMA_RUNNER_CONFIG",
-      "AMA_RUNNER_CREDENTIALS",
-      "AMA_OIDC_CLIENT_SECRET",
-      "OIDC_CLIENT_SECRET",
-      "CLOUDFLARE_API_TOKEN",
-      "CLOUDFLARE_API_KEY",
-      "CF_API_TOKEN",
-      "CF_API_KEY",
-    ]) {
+    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_TOKEN", "CF_API_KEY"]) {
       vi.stubEnv(key, `secret-${key}`);
     }
     vi.stubEnv("ANTHROPIC_API_KEY", "provider-secret");
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
     await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
 
     const childEnv = spawnMock.mock.calls[0]?.[2]?.env as Record<string, string>;
     expect(childEnv.ANTHROPIC_API_KEY).toBe("provider-secret");
-    for (const key of [
-      "AK_API_KEY",
-      "AMA_TOKEN",
-      "AMA_RUNNER_CONFIG",
-      "AMA_RUNNER_CREDENTIALS",
-      "AMA_OIDC_CLIENT_SECRET",
-      "OIDC_CLIENT_SECRET",
-      "CLOUDFLARE_API_TOKEN",
-      "CLOUDFLARE_API_KEY",
-      "CF_API_TOKEN",
-      "CF_API_KEY",
-    ]) {
+    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_TOKEN", "CF_API_KEY"]) {
       expect(childEnv).not.toHaveProperty(key);
     }
   });
 
-  it.each([
-    ["local", "local"],
-    ["ama", "ama"],
-    ["ama", "local"],
-  ] as const)("serializes %s then %s startup with the shared transaction lock", async (winnerMode, loserMode) => {
+  it("serializes concurrent local startups with the shared transaction lock", async () => {
     localSpawnBehavior = "manual";
-    amaSpawnBehavior = "manual";
-    if (winnerMode === "ama") mockMachineRunnerFetch();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(process, "kill").mockImplementation((_pid: number, signal?: NodeJS.Signals | number) => {
@@ -316,22 +211,21 @@ describe("start runtime command", () => {
     startupLock.lock.mockResolvedValueOnce(firstRelease).mockReturnValueOnce(secondLock);
     const winner = new Command();
     const loser = new Command();
-    registerStartCommandSource(winner);
-    registerStartCommandSource(loser);
+    registerStartCommand(winner);
+    registerStartCommand(loser);
 
-    const winnerStarted = winner.parseAsync(["start", "--mode", winnerMode, "--api-url", "https://ak.test", "--api-key", "ak_test_key"], {
+    const winnerStarted = winner.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], {
       from: "user",
     });
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
     const winnerChild = lastSpawnChild;
-    const loserStarted = loser.parseAsync(["start", "--mode", loserMode, "--api-url", "https://ak.test", "--api-key", "ak_test_key"], {
+    const loserStarted = loser.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], {
       from: "user",
     });
     await vi.waitFor(() => expect(startupLock.lock).toHaveBeenCalledTimes(2));
 
     expect(spawnMock).toHaveBeenCalledOnce();
-    if (winnerMode === "local") winnerChild?.emit("message", { type: "ready", machineId: "machine_lock_winner" });
-    else winnerChild?.emit("spawn");
+    winnerChild?.emit("message", { type: "ready", machineId: "machine_lock_winner" });
     await winnerStarted;
     await expect(loserStarted).rejects.toThrow("process.exit");
 
@@ -348,56 +242,6 @@ describe("start runtime command", () => {
     expect(readFileSync(join(testSessionsDir, "daemon.pid"), "utf8")).toBe("12345");
   });
 
-  it("finishes AMA onboarding and interactive login before acquiring the startup lock", async () => {
-    const fetchSpy = mockMachineRunnerFetch();
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    let loginObservedWithoutLock = false;
-    spawnSyncMock.mockImplementationOnce(() => {
-      loginObservedWithoutLock = startupLock.lock.mock.calls.length === 0;
-      return { status: 0 };
-    });
-    const program = new Command();
-    registerStartCommandSource(program);
-
-    await program.parseAsync(["start", "--mode", "ama", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(loginObservedWithoutLock).toBe(true);
-    expect(fetchSpy.mock.invocationCallOrder[0]).toBeLessThan(spawnSyncMock.mock.invocationCallOrder[0]);
-    expect(spawnSyncMock.mock.invocationCallOrder[0]).toBeLessThan(startupLock.lock.mock.invocationCallOrder[0]);
-    expect(startupLock.lock.mock.invocationCallOrder[0]).toBeLessThan(spawnMock.mock.invocationCallOrder[0]);
-  });
-
-  it("rechecks a live PID inside the lock after an unlocked AMA login", async () => {
-    mockMachineRunnerFetch();
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(process, "kill").mockImplementation((_pid: number, signal?: NodeJS.Signals | number) => {
-      if (signal === 0) return true;
-      return true;
-    });
-    vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit");
-    });
-    const release = vi.fn(async () => {});
-    startupLock.lock.mockResolvedValueOnce(release);
-    spawnSyncMock.mockImplementationOnce(() => {
-      expect(startupLock.lock).not.toHaveBeenCalled();
-      writeFileSync(join(testSessionsDir, "daemon.pid"), "7654321");
-      return { status: 0 };
-    });
-    const program = new Command();
-    registerStartCommandSource(program);
-
-    await expect(
-      program.parseAsync(["start", "--mode", "ama", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" }),
-    ).rejects.toThrow("process.exit");
-
-    expect(startupLock.lock).toHaveBeenCalledOnce();
-    expect(spawnMock).not.toHaveBeenCalled();
-    expect(release).toHaveBeenCalledOnce();
-    expect(readFileSync(join(testSessionsDir, "daemon.pid"), "utf8")).toBe("7654321");
-  });
-
   it.each([
     ["--max-concurrent", "0"],
     ["--max-concurrent", "65"],
@@ -407,7 +251,7 @@ describe("start runtime command", () => {
     ["--task-timeout", "604800001"],
   ])("rejects invalid local numeric option %s=%s", async (option, value) => {
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     await expect(
       program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key", option, value], { from: "user" }),
@@ -418,7 +262,7 @@ describe("start runtime command", () => {
   it.each(["error", "exit"] as const)("does not persist PID/state when the local child reports %s before readiness", async (behavior) => {
     localSpawnBehavior = behavior;
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     await expect(program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" })).rejects.toThrow(
       behavior === "error" ? "local spawn failed" : "exited before readiness",
@@ -430,12 +274,12 @@ describe("start runtime command", () => {
   it("rejects a concurrent start while the first parent owns the starting marker", async () => {
     localSpawnBehavior = "manual";
     const firstProgram = new Command();
-    registerStartCommandSource(firstProgram);
+    registerStartCommand(firstProgram);
     const first = firstProgram.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
     await vi.waitFor(() => expect(readFileSync(join(testSessionsDir, "daemon.pid"), "utf8")).toBe(`starting:${process.pid}`));
 
     const secondProgram = new Command();
-    registerStartCommandSource(secondProgram);
+    registerStartCommand(secondProgram);
     await expect(secondProgram.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" })).rejects.toThrow(
       `Runtime already running or starting (PID ${process.pid})`,
     );
@@ -451,7 +295,7 @@ describe("start runtime command", () => {
     writeFileSync(join(testSessionsDir, "daemon.pid"), "starting:99999999");
     vi.spyOn(console, "log").mockImplementation(() => {});
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
 
@@ -464,7 +308,7 @@ describe("start runtime command", () => {
       throw new Error("synchronous spawn failure");
     });
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     await expect(program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" })).rejects.toThrow(
       "synchronous spawn failure",
@@ -485,7 +329,7 @@ describe("start runtime command", () => {
       return true;
     });
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
     const started = program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
     await vi.waitFor(() => expect(readFileSync(join(testSessionsDir, "daemon.pid"), "utf8")).toBe(`starting:${process.pid}`));
     writeFileSync(join(testSessionsDir, "daemon.pid"), "54321");
@@ -509,7 +353,7 @@ describe("start runtime command", () => {
     });
     mkdirSync(join(testSessionsDir, "daemon-state.json"));
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
     const started = program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
 
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
@@ -526,7 +370,7 @@ describe("start runtime command", () => {
     localSpawnBehavior = "manual";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     const started = program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
@@ -540,7 +384,6 @@ describe("start runtime command", () => {
     expect(readFileSync(join(testSessionsDir, "daemon.pid"), "utf8")).toBe("12345");
     expect(JSON.parse(readFileSync(join(testSessionsDir, "daemon-state.json"), "utf8"))).toMatchObject({
       machineId: "machine_after_ready",
-      runtime: "local-daemon",
     });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Local machine runner started"));
   });
@@ -559,7 +402,7 @@ describe("start runtime command", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const program = new Command();
-    registerStartCommandSource(program);
+    registerStartCommand(program);
 
     const started = program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
     const rejected = expect(started).rejects.toThrow("did not become ready within 30s");
@@ -573,315 +416,6 @@ describe("start runtime command", () => {
     expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Local machine runner started"));
   });
 
-  it("preserves AMA onboarding when --mode ama is explicit", async () => {
-    const program = new Command();
-    registerStartCommandSource(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
-
-    await program.parseAsync(["start", "--mode", "ama", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-    expect(spawnMock).toHaveBeenCalledWith(testRunnerBin, expect.arrayContaining(["--project-id", "project_1"]), expect.any(Object));
-  });
-
-  it("sanitizes inherited control-plane secrets from AMA login and spawn environments", async () => {
-    const controlPlaneKeys = [
-      "AK_API_KEY",
-      "AMA_TOKEN",
-      "AMA_RUNNER_CONFIG",
-      "AMA_OIDC_CLIENT_SECRET",
-      "OIDC_CLIENT_SECRET",
-      "CLOUDFLARE_API_TOKEN",
-      "CLOUDFLARE_API_KEY",
-      "CF_API_TOKEN",
-      "CF_API_KEY",
-    ];
-    for (const key of controlPlaneKeys) vi.stubEnv(key, `inherited-${key}`);
-    vi.stubEnv("AMA_RUNNER_CREDENTIALS", "inherited-credential-store");
-    vi.stubEnv("ANTHROPIC_API_KEY", "provider-credential");
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
-
-    const program = new Command();
-    registerStartCommandSource(program);
-    await program.parseAsync(["start", "--mode", "ama", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    const loginEnv = spawnSyncMock.mock.calls[0]?.[2]?.env as Record<string, string>;
-    const runnerEnv = spawnMock.mock.calls[0]?.[2]?.env as Record<string, string>;
-    for (const env of [loginEnv, runnerEnv]) {
-      expect(env.ANTHROPIC_API_KEY).toBe("provider-credential");
-      expect(env.AMA_RUNNER_CREDENTIALS).toBe(credentialsFilePath);
-      expect(env.AMA_RUNNER_CREDENTIALS).not.toBe("inherited-credential-store");
-      for (const key of controlPlaneKeys) expect(env).not.toHaveProperty(key);
-    }
-  });
-
-  it("starts the Machine runner, pointing it at the AMA origin and project/environment to join (runner self-authenticates)", async () => {
-    const program = new Command();
-    registerStartCommand(program);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "https://ak.test/api/machines") {
-        const body = JSON.parse(String(init?.body)) as Record<string, any>;
-        expect(body.runtimes).toEqual([{ name: "codex", status: "ready", checked_at: expect.any(String) }]);
-        return new Response(
-          JSON.stringify({
-            id: "machine_1",
-            name: "test-machine",
-            runner: {
-              origin: "https://runner-control.test",
-              projectId: "project_1",
-              environmentId: "env_1",
-            },
-          }),
-          { status: 201, headers: { "content-type": "application/json" } },
-        );
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "https://ak.test/api/machines",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ authorization: "Bearer ak_test_key" }),
-      }),
-    );
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-    // Device login (spawnSync) must run BEFORE the detached run-mode spawn
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({
-        stdio: "inherit",
-        env: expect.objectContaining({
-          AMA_RUNNER_CREDENTIALS: credentialsFilePath,
-        }),
-      }),
-    );
-    // AMA_TOKEN must NOT be forwarded to the runner
-    expect(spawnSyncMock.mock.calls[0]?.[2]?.env).not.toHaveProperty("AMA_TOKEN");
-
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      [
-        "--api-server",
-        "https://runner-control.test",
-        "--project-id",
-        "project_1",
-        "--environment-id",
-        "env_1",
-        "--max-concurrent",
-        "5",
-        "--allow-unsafe-process",
-      ],
-      expect.objectContaining({ detached: true, windowsHide: true }),
-    );
-
-    // Verify invocation order: device login first, then run-mode detached spawn
-    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-
-    // AK itself does not synchronously write a login file — the runner writes it during the login flow
-    expect(existsSync(credentialsFilePath)).toBe(false);
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Machine runner started"));
-    const state = JSON.parse(readFileSync(join(testSessionsDir, "daemon-state.json"), "utf-8"));
-    expect(state).toMatchObject({ runtime: "ama-runner", apiUrl: "https://ak.test", providers: ["codex"] });
-    expect(state.runnerVersion).toMatchObject({ version: "0.1.0", commit: "test-commit" });
-  });
-
-  it("does not pass onboarding runner id before AMA registration", async () => {
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://ama.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://ama.test"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      [
-        "--api-server",
-        "https://ama.test",
-        "--project-id",
-        "project_1",
-        "--environment-id",
-        "env_1",
-        "--max-concurrent",
-        "5",
-        "--allow-unsafe-process",
-      ],
-      expect.objectContaining({ detached: true }),
-    );
-  });
-
-  it("skips device login when a valid saved login exists for the origin", async () => {
-    writeCredentialStore({
-      apiServer: "https://runner-control.test",
-      refreshToken: "r",
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).not.toHaveBeenCalled();
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      expect.arrayContaining(["--api-server", "https://runner-control.test"]),
-      expect.objectContaining({ detached: true }),
-    );
-  });
-
-  it("migrates a legacy saved login before starting the runner", async () => {
-    writeFileSync(
-      legacyLoginFilePath,
-      JSON.stringify({
-        apiServer: "https://runner-control.test",
-        accessToken: "legacy-access-token",
-        refreshToken: "legacy-refresh-token",
-        tokenType: "Bearer",
-        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-        scope: "openid profile email offline_access",
-      }),
-    );
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).not.toHaveBeenCalled();
-    const credentials = JSON.parse(readFileSync(credentialsFilePath, "utf-8"));
-    expect(credentials).toMatchObject({
-      active: "https://runner-control.test#legacy",
-      profiles: [expect.objectContaining({ apiServer: "https://runner-control.test", accountId: "legacy", refreshToken: "legacy-refresh-token" })],
-    });
-  });
-
-  it("re-runs device login when the saved login targets a different origin", async () => {
-    writeCredentialStore({
-      apiServer: "https://other-origin.test",
-      refreshToken: "r",
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-  });
-
-  it("re-runs device login when the saved access token is expired and has no refresh token", async () => {
-    writeCredentialStore({
-      apiServer: "https://runner-control.test",
-      expiresAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-  });
-
-  it("refreshes a saved runner login before start when the access token is expired but refreshable", async () => {
-    writeCredentialStore({
-      apiServer: "https://runner-control.test",
-      refreshToken: "refresh-token",
-      expiresAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledOnce();
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "refresh"],
-      expect.objectContaining({
-        stdio: "inherit",
-        env: expect.objectContaining({
-          AMA_RUNNER_CREDENTIALS: credentialsFilePath,
-        }),
-      }),
-    );
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      expect.arrayContaining(["--api-server", "https://runner-control.test"]),
-      expect.objectContaining({ detached: true }),
-    );
-  });
-
-  it("clears a stale refreshable runner login and re-runs device login when refresh fails", async () => {
-    writeCredentialStore({
-      apiServer: "https://runner-control.test",
-      refreshToken: "stale-refresh-token",
-      expiresAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    spawnSyncMock.mockReturnValueOnce({ status: 1 }).mockReturnValueOnce({ status: 0 }).mockReturnValueOnce({ status: 0 });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(1, testRunnerBin, ["auth", "refresh"], expect.objectContaining({ stdio: "inherit" }));
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(
-      2,
-      testRunnerBin,
-      ["auth", "logout", "https://runner-control.test"],
-      expect.objectContaining({ stdio: "ignore" }),
-    );
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(
-      3,
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      expect.arrayContaining(["--api-server", "https://runner-control.test"]),
-      expect.objectContaining({ detached: true }),
-    );
-  });
-
   it("starts using only --api-url when credentials are already saved", async () => {
     mkdirSync(testSessionsDir, { recursive: true });
     const host = "ak.test";
@@ -891,16 +425,15 @@ describe("start runtime command", () => {
     );
 
     vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
 
     const program = new Command();
     registerStartCommand(program);
     await program.parseAsync(["start", "--api-url", "https://ak.test"], { from: "user" });
 
     expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      expect.arrayContaining(["--api-server", "https://runner-control.test"]),
-      expect.objectContaining({ detached: true }),
+      process.execPath,
+      [process.argv[1], "__daemon", "--max-concurrent", "5", "--poll-interval", "10000", "--task-timeout", "7200000"],
+      expect.objectContaining({ detached: true, stdio: expect.arrayContaining(["ipc"]), windowsHide: true }),
     );
   });
 
@@ -934,37 +467,6 @@ describe("start runtime command", () => {
     exitSpy.mockRestore();
   });
 
-  it("throws when machine registration returns a non-OK HTTP status", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("Unauthorized", { status: 401 }));
-
-    const program = new Command();
-    registerStartCommand(program);
-
-    await expect(program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "bad_key"], { from: "user" })).rejects.toThrow(
-      /Machine registration failed with HTTP 401/,
-    );
-
-    expect(spawnMock).not.toHaveBeenCalled();
-  });
-
-  it("throws when machine registration response has no runner onboarding details", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ id: "m1", name: "test", runner: null }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-
-    const program = new Command();
-    registerStartCommand(program);
-
-    await expect(program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_key"], { from: "user" })).rejects.toThrow(
-      /Machine registration did not return runner onboarding details/,
-    );
-
-    expect(spawnMock).not.toHaveBeenCalled();
-  });
-
   it("clears session dir when starting with a different API URL than previous state", async () => {
     mkdirSync(testSessionsDir, { recursive: true });
     writeFileSync(
@@ -973,7 +475,6 @@ describe("start runtime command", () => {
     );
 
     vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
 
     const program = new Command();
     registerStartCommand(program);
@@ -982,26 +483,10 @@ describe("start runtime command", () => {
     const state = JSON.parse(readFileSync(join(testSessionsDir, "daemon-state.json"), "utf-8"));
     expect(state.apiUrl).toBe("https://ak.test");
   });
-
-  it("fails start when device login exits non-zero", async () => {
-    spawnSyncMock.mockReturnValue({ status: 1 });
-    const program = new Command();
-    registerStartCommand(program);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    mockMachineRunnerFetch("https://runner-control.test");
-
-    await expect(program.parseAsync(["start", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" })).rejects.toThrow(
-      /device login did not complete/,
-    );
-
-    expect(spawnMock).not.toHaveBeenCalled();
-  });
 });
 
 describe("restart runtime command", () => {
   it.each([
-    ["--mode", "invalid"],
     ["--max-concurrent", "0"],
     ["--poll-interval", "1.5"],
     ["--task-timeout", "604800001"],
@@ -1009,7 +494,7 @@ describe("restart runtime command", () => {
     writeFileSync(join(testSessionsDir, "daemon.pid"), String(process.pid));
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     const program = new Command();
-    registerRestartCommandSource(program);
+    registerRestartCommand(program);
 
     await expect(
       program.parseAsync(["restart", "--api-url", "https://ak.test", "--api-key", "ak_test_key", option, value], { from: "user" }),
@@ -1026,7 +511,7 @@ describe("restart runtime command", () => {
     ["--task-timeout", "9007199254740992"],
   ])("rejects invalid local numeric option %s=%s", async (option, value) => {
     const program = new Command();
-    registerRestartCommandSource(program);
+    registerRestartCommand(program);
 
     await expect(
       program.parseAsync(["restart", "--api-url", "https://ak.test", "--api-key", "ak_test_key", option, value], { from: "user" }),
@@ -1039,7 +524,6 @@ describe("restart runtime command", () => {
     writeFileSync(
       join(testSessionsDir, "daemon-state.json"),
       JSON.stringify({
-        runtime: "local-daemon",
         apiUrl: "https://ak.test",
         maxConcurrent: 3,
         pollInterval: 6000,
@@ -1048,10 +532,9 @@ describe("restart runtime command", () => {
       }),
     );
     vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
 
     const preservedProgram = new Command();
-    registerRestartCommandSource(preservedProgram);
+    registerRestartCommand(preservedProgram);
     await preservedProgram.parseAsync(["restart", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
     expect(spawnMock).toHaveBeenLastCalledWith(
       process.execPath,
@@ -1062,7 +545,7 @@ describe("restart runtime command", () => {
     rmSync(join(testSessionsDir, "daemon.pid"), { force: true });
     spawnMock.mockClear();
     const overrideProgram = new Command();
-    registerRestartCommandSource(overrideProgram);
+    registerRestartCommand(overrideProgram);
     await overrideProgram.parseAsync(
       ["restart", "--api-url", "https://ak.test", "--api-key", "ak_test_key", "--poll-interval", "5000", "--task-timeout", "0"],
       { from: "user" },
@@ -1091,7 +574,6 @@ describe("restart runtime command", () => {
     });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
 
     const program = new Command();
     registerRestartCommand(program);
@@ -1099,7 +581,7 @@ describe("restart runtime command", () => {
 
     const logged = logSpy.mock.calls.map((c) => String(c[0]));
     expect(logged.some((line) => line.includes("Machine runner stopped"))).toBe(true);
-    expect(logged.some((line) => line.includes("Machine runner started"))).toBe(true);
+    expect(logged.some((line) => line.includes("machine runner started"))).toBe(true);
     killSpy.mockRestore();
   });
 
@@ -1112,7 +594,7 @@ describe("restart runtime command", () => {
     // nowCount=2: while check (startTime < deadline → enter loop).
     // In loop: kill(0) sig0Count=2 alive → sleep(200). nowCount=3: while check (past deadline → exit).
     // Alive check: kill(0) sig0Count=3 alive → force-kill (SIGKILL).
-    // startAmaRunner readDaemonPid: kill(0) sig0Count=4 → throw (no PID found → startAmaRunner proceeds).
+    // startRunner readDaemonPid: kill(0) sig0Count=4 → throw (no PID found → startRunner proceeds).
     let sig0Count = 0;
     const killSpy = vi.spyOn(process, "kill").mockImplementation((_pid: number, sig?: any) => {
       if (sig === 0) {
@@ -1131,7 +613,6 @@ describe("restart runtime command", () => {
     });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
 
     const program = new Command();
     registerRestartCommand(program);
@@ -1139,53 +620,12 @@ describe("restart runtime command", () => {
 
     const logged = logSpy.mock.calls.map((c) => String(c[0]));
     expect(logged.some((line) => line.includes("force-killed"))).toBe(true);
-    expect(logged.some((line) => line.includes("Machine runner started"))).toBe(true);
+    expect(logged.some((line) => line.includes("machine runner started"))).toBe(true);
     killSpy.mockRestore();
-  });
-
-  it("restarts the Machine runner with the original AK credentials flow", async () => {
-    const program = new Command();
-    registerRestartCommand(program);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
-
-    await program.parseAsync(["restart", "--api-url", "https://ak.test", "--api-key", "ak_test_key"], { from: "user" });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      ["auth", "login", "--api-server", "https://runner-control.test"],
-      expect.objectContaining({
-        stdio: "inherit",
-        env: expect.objectContaining({
-          AMA_RUNNER_CREDENTIALS: credentialsFilePath,
-        }),
-      }),
-    );
-    expect(spawnSyncMock.mock.calls[0]?.[2]?.env).not.toHaveProperty("AMA_TOKEN");
-
-    expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      [
-        "--api-server",
-        "https://runner-control.test",
-        "--project-id",
-        "project_1",
-        "--environment-id",
-        "env_1",
-        "--max-concurrent",
-        "5",
-        "--allow-unsafe-process",
-      ],
-      expect.objectContaining({ detached: true }),
-    );
-    expect(logSpy).toHaveBeenCalledWith("○ Machine runner was not running");
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Machine runner started"));
-    const state = JSON.parse(readFileSync(join(testSessionsDir, "daemon-state.json"), "utf-8"));
-    expect(state).toMatchObject({ runtime: "ama-runner", apiUrl: "https://ak.test" });
   });
 });
 
-describe("status command — ama-runner with machineId", () => {
+describe("status command", () => {
   function writeDaemonState(state: Record<string, unknown>) {
     mkdirSync(testSessionsDir, { recursive: true });
     writeFileSync(join(testSessionsDir, "daemon-state.json"), JSON.stringify(state));
@@ -1205,11 +645,10 @@ describe("status command — ama-runner with machineId", () => {
     );
   }
 
-  it("prints AMA runner online status and ready runtimes when getMachine resolves", async () => {
+  it("prints runner online status and ready runtimes when getMachine resolves", async () => {
     const machineId = "machine-status-test";
     writePidFile(process.pid);
     writeDaemonState({
-      runtime: "ama-runner",
       machineId,
       providers: ["machine-runner"],
       maxConcurrent: 5,
@@ -1256,7 +695,6 @@ describe("status command — ama-runner with machineId", () => {
     const machineId = "machine-partial-ready";
     writePidFile(process.pid);
     writeDaemonState({
-      runtime: "ama-runner",
       machineId,
       providers: ["machine-runner"],
       maxConcurrent: 5,
@@ -1300,7 +738,6 @@ describe("status command — ama-runner with machineId", () => {
     const machineId = "machine-err";
     writePidFile(process.pid);
     writeDaemonState({
-      runtime: "ama-runner",
       machineId,
       providers: ["machine-runner"],
       maxConcurrent: 5,
@@ -1323,10 +760,9 @@ describe("status command — ama-runner with machineId", () => {
     expect(logged.some((line) => line.includes("Runner:") && line.includes("could not reach AK API"))).toBe(true);
   });
 
-  it("does not print AMA runner line when state has no machineId", async () => {
+  it("does not query the API when state has no machineId", async () => {
     writePidFile(process.pid);
     writeDaemonState({
-      runtime: "ama-runner",
       // no machineId
       providers: ["machine-runner"],
       maxConcurrent: 5,
@@ -1345,7 +781,7 @@ describe("status command — ama-runner with machineId", () => {
     await program.parseAsync(["status"], { from: "user" });
 
     const logged = logSpy.mock.calls.map((c) => String(c[0]));
-    expect(logged.some((line) => line.includes("AMA runner"))).toBe(false);
+    expect(logged.some((line) => line.includes("Runner:"))).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -1364,7 +800,6 @@ describe("status command — ama-runner with machineId", () => {
     writePidFile(process.pid);
     // Daemon state without startedAt field
     writeDaemonState({
-      runtime: "ama-runner",
       providers: ["codex"],
       maxConcurrent: 5,
       apiUrl: "https://ak.test",
@@ -1515,16 +950,15 @@ describe("restart command — additional flows", () => {
     );
 
     vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
 
     const program = new Command();
     registerRestartCommand(program);
     await program.parseAsync(["restart", "--api-url", "https://ak.test"], { from: "user" });
 
     expect(spawnMock).toHaveBeenCalledWith(
-      testRunnerBin,
-      expect.arrayContaining(["--api-server", "https://runner-control.test"]),
-      expect.objectContaining({ detached: true }),
+      process.execPath,
+      [process.argv[1], "__daemon", "--max-concurrent", "5", "--poll-interval", "10000", "--task-timeout", "7200000"],
+      expect.objectContaining({ detached: true, stdio: expect.arrayContaining(["ipc"]), windowsHide: true }),
     );
   });
 
@@ -1558,7 +992,6 @@ describe("restart command — error paths", () => {
     writeFileSync(join(sessionsSubdir, "old-session.json"), "{}");
 
     vi.spyOn(console, "log").mockImplementation(() => {});
-    mockMachineRunnerFetch();
 
     const program = new Command();
     registerRestartCommand(program);

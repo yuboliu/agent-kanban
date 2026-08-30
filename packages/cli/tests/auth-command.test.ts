@@ -93,8 +93,8 @@ beforeEach(() => {
   delete process.env.AK_MAINTAINER_ID;
   delete process.env.AK_SESSION_ID;
   delete process.env.AK_AGENT_KEY;
-  delete process.env.AMA_WORKSPACE_HOME;
-  delete process.env.AMA_WORKSPACE;
+  delete process.env.AK_WORKSPACE_HOME;
+  delete process.env.AK_WORKSPACE_DIR;
   mockGetRepository.mockResolvedValue({ id: "repo-1", url: "https://github.com/org/repo" });
   mockCreateRepositoryGithubToken.mockResolvedValue({
     repository_id: "repo-1",
@@ -126,8 +126,8 @@ afterEach(() => {
   delete process.env.AK_MAINTAINER_ID;
   delete process.env.AK_SESSION_ID;
   delete process.env.AK_AGENT_KEY;
-  delete process.env.AMA_WORKSPACE_HOME;
-  delete process.env.AMA_WORKSPACE;
+  delete process.env.AK_WORKSPACE_HOME;
+  delete process.env.AK_WORKSPACE_DIR;
   consoleLogSpy.mockRestore();
 });
 
@@ -247,7 +247,7 @@ describe("auth git command", () => {
 
   it("configures GitHub auth inside an AK worker", async () => {
     process.env.AK_WORKER = "1";
-    process.env.AMA_WORKSPACE_HOME = "/tmp/ak-session-home";
+    process.env.AK_WORKSPACE_HOME = "/tmp/ak-session-home";
 
     await makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" });
 
@@ -257,9 +257,9 @@ describe("auth git command", () => {
     expect(consoleLogSpy).toHaveBeenCalledWith("Token validity: about 1 hour. If it expires, re-run `ak auth git repo-1` to mint a fresh token.");
   });
 
-  it("uses AMA_WORKSPACE .home for worker GitHub auth when the bridge session home is absent", async () => {
+  it("uses AK_WORKSPACE_DIR .home for worker GitHub auth when the workspace home is absent", async () => {
     process.env.AK_WORKER = "1";
-    process.env.AMA_WORKSPACE = "/tmp/ak-workspace";
+    process.env.AK_WORKSPACE_DIR = "/tmp/ak-workspace";
 
     await makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" });
 

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -15,18 +15,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { arch, platform, release } from "node:os";
 import { join } from "node:path";
 import type { MachineRuntime } from "@agent-kanban/shared";
 import type { Command } from "commander";
 import lockfile from "proper-lockfile";
-import { type AmaRunnerVersionInfo, resolveAmaRunnerBinary } from "../amaRunner.js";
 import { MachineClient } from "../client/machine.js";
 import { getCredentials, saveCredentials, setCurrent } from "../config.js";
 import { withoutControlPlaneSecrets } from "../controlPlaneEnv.js";
 import { assertDaemonDependencies } from "../daemon/preflight.js";
-import { generateDeviceId } from "../device.js";
-import { resolveMachineName } from "../machineName.js";
 import { DAEMON_STATE_FILE, LOGS_DIR, PID_FILE, SESSIONS_DIR, STATE_DIR } from "../paths.js";
 import { getAvailableProviders } from "../providers/registry.js";
 import { isPidAlive } from "../session/store.js";
@@ -42,44 +38,15 @@ const MAX_POLL_INTERVAL = 300_000;
 const MIN_TASK_TIMEOUT = 1_000;
 const MAX_TASK_TIMEOUT = 604_800_000;
 const LOCAL_READY_TIMEOUT_MS = 30_000;
-// Where ama-runner persists device-login credentials. AK pins this so the login
-// store is deterministic, kept under AK's own state, and isolated from a
-// standalone ama-runner install that may target a different origin.
-const AMA_RUNNER_CREDENTIALS_FILE = join(STATE_DIR, "ama-runner-credentials.json");
-const LEGACY_AMA_RUNNER_LOGIN_FILE = join(STATE_DIR, "ama-runner-login.json");
-const RUNNER_TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 interface DaemonState {
   providers: string[];
   maxConcurrent: number;
   apiUrl: string;
   startedAt: string;
-  runtime?: "local-daemon" | "ama-runner";
   pollInterval?: number;
   taskTimeout?: number;
-  runnerPath?: string;
-  runnerVersion?: AmaRunnerVersionInfo | null;
   machineId?: string;
-}
-
-interface AmaRunnerOnboardingResponse {
-  origin: string;
-  projectId: string;
-  environmentId: string;
-  version?: string | null;
-}
-
-interface RegisteredMachine {
-  id: string;
-  name: string;
-  runner?: AmaRunnerOnboardingResponse | null;
-}
-
-type RunnerMode = "local" | "ama";
-
-function runnerMode(value: unknown): RunnerMode {
-  if (value === "local" || value === "ama") return value;
-  throw new Error(`Invalid runner mode "${String(value)}". Expected local or ama.`);
 }
 
 function boundedInteger(name: string, value: unknown, min: number, max: number, allowZero = false): number {
@@ -274,145 +241,6 @@ function maskApiUrl(url: string): string {
   }
 }
 
-function amaRunnerArgs(opts: Record<string, unknown>): string[] {
-  const args: string[] = [];
-  const add = (flag: string, value: unknown) => {
-    if (typeof value === "string" && value.length > 0) args.push(flag, value);
-  };
-  // AK pre-authenticates the runner via ensureRunnerLogin before spawn; these
-  // args only point run mode at the origin and the project/environment to join.
-  add("--api-server", opts.amaOrigin);
-  add("--project-id", opts.amaProjectId);
-  add("--environment-id", opts.amaEnvironmentId);
-  add("--max-concurrent", opts.maxConcurrent);
-  // Parity with the old daemon, which always ran agent processes directly on
-  // the host: AK acknowledges the unsandboxed process adapter on the user's
-  // behalf instead of exposing a runner flag.
-  args.push("--allow-unsafe-process");
-  return args;
-}
-
-interface SavedRunnerCredentialProfile {
-  accountId?: string;
-  apiServer?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  expiresAt?: string;
-}
-
-interface SavedRunnerCredentialStore {
-  active?: string;
-  profiles?: SavedRunnerCredentialProfile[];
-}
-
-interface LegacyRunnerLogin {
-  apiServer?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  tokenType?: string;
-  expiresAt?: string;
-  scope?: string;
-}
-
-function jwtSubject(token: string | undefined): string | null {
-  const payload = token?.split(".")[1];
-  if (!payload) return null;
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return typeof decoded.sub === "string" && decoded.sub.trim() ? decoded.sub.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-function migrateLegacyRunnerLogin(): void {
-  if (existsSync(AMA_RUNNER_CREDENTIALS_FILE) || !existsSync(LEGACY_AMA_RUNNER_LOGIN_FILE)) return;
-  let saved: LegacyRunnerLogin;
-  try {
-    saved = JSON.parse(readFileSync(LEGACY_AMA_RUNNER_LOGIN_FILE, "utf-8"));
-  } catch {
-    return;
-  }
-  const apiServer = saved.apiServer?.replace(/\/$/, "");
-  if (!apiServer || !saved.accessToken) return;
-  const accountId = jwtSubject(saved.accessToken) ?? "legacy";
-  const profile: SavedRunnerCredentialProfile = {
-    accountId,
-    apiServer,
-    accessToken: saved.accessToken,
-    ...(saved.refreshToken ? { refreshToken: saved.refreshToken } : {}),
-    ...(saved.expiresAt ? { expiresAt: saved.expiresAt } : {}),
-  };
-  const credentialStore = {
-    active: `${apiServer}#${accountId}`,
-    profiles: [
-      {
-        ...profile,
-        ...(saved.tokenType ? { tokenType: saved.tokenType } : {}),
-        ...(saved.scope ? { scope: saved.scope } : {}),
-      },
-    ],
-  };
-  mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(AMA_RUNNER_CREDENTIALS_FILE, `${JSON.stringify(credentialStore, null, 2)}\n`, { mode: 0o600 });
-}
-
-// Mirror ama-runner's own token-validity rules: a saved login is usable when it
-// targets this origin and can still produce a token (refreshable, or an
-// unexpired access token). Anything else means the runner would exit demanding a
-// fresh login, so AK re-runs the device flow instead.
-function runnerLoginStatus(origin: string): "missing" | "valid" | "refresh" {
-  migrateLegacyRunnerLogin();
-  if (!existsSync(AMA_RUNNER_CREDENTIALS_FILE)) return "missing";
-  let saved: SavedRunnerCredentialStore;
-  try {
-    saved = JSON.parse(readFileSync(AMA_RUNNER_CREDENTIALS_FILE, "utf-8"));
-  } catch {
-    return "missing";
-  }
-  const stripTrailingSlash = (value: string) => value.replace(/\/$/, "");
-  const profiles = Array.isArray(saved.profiles) ? saved.profiles : [];
-  const active = profiles.find((profile) => `${stripTrailingSlash(profile.apiServer ?? "")}#${profile.accountId ?? ""}` === saved.active);
-  const matches = profiles.filter((profile) => stripTrailingSlash(profile.apiServer ?? "") === stripTrailingSlash(origin));
-  const profile =
-    active && stripTrailingSlash(active.apiServer ?? "") === stripTrailingSlash(origin) ? active : matches.length === 1 ? matches[0] : null;
-  if (!profile) return "missing";
-  if (profile.refreshToken) {
-    if (!profile.accessToken || !profile.expiresAt) return "refresh";
-    const expiresAt = Date.parse(profile.expiresAt);
-    if (Number.isNaN(expiresAt)) return "refresh";
-    return expiresAt > Date.now() + RUNNER_TOKEN_REFRESH_SKEW_MS ? "valid" : "refresh";
-  }
-  if (!profile.accessToken) return "missing";
-  if (profile.expiresAt) {
-    const expiresAt = Date.parse(profile.expiresAt);
-    if (Number.isNaN(expiresAt) || expiresAt <= Date.now()) return "missing";
-  }
-  return "valid";
-}
-
-// ama-runner authenticates with AMA via its own OAuth device login, a separate
-// interactive step from the polling run mode. AK drives it once, foreground, so
-// the user can authorize; the saved refresh token keeps later starts silent.
-function ensureRunnerLogin(runnerBin: string, origin: string, env: NodeJS.ProcessEnv): void {
-  const status = runnerLoginStatus(origin);
-  if (status === "valid") return;
-  if (status === "refresh") {
-    const refreshed = spawnSync(runnerBin, ["auth", "refresh"], { stdio: "inherit", env });
-    if (refreshed.error) throw new Error(`Failed to refresh ama-runner login: ${refreshed.error.message}`);
-    if (refreshed.status === 0) return;
-    console.error("Saved ama-runner login could not be refreshed; re-authenticating.");
-    const logout = spawnSync(runnerBin, ["auth", "logout", origin], { stdio: "ignore", env });
-    if (logout.error) throw new Error(`Failed to clear stale ama-runner login: ${logout.error.message}`);
-  }
-  mkdirSync(STATE_DIR, { recursive: true });
-  console.log(`Authenticating ama-runner with AMA (${maskApiUrl(origin)})…`);
-  const result = spawnSync(runnerBin, ["auth", "login", "--api-server", origin], { stdio: "inherit", env });
-  if (result.error) throw new Error(`Failed to launch ama-runner login: ${result.error.message}`);
-  if (result.status !== 0)
-    throw new Error(`ama-runner device login did not complete (exit status ${result.status}); cannot start the machine runner`);
-}
-
 function machineRuntimes(): MachineRuntime[] {
   const providers = getAvailableProviders();
   if (providers.length === 0) throw new Error("No local runtime provider is available");
@@ -420,7 +248,7 @@ function machineRuntimes(): MachineRuntime[] {
   return providers.map((provider) => ({ name: provider.name, status: "ready", checked_at: checkedAt }));
 }
 
-async function waitForSpawn(child: ReturnType<typeof spawn>, runnerBin: string): Promise<number> {
+async function _waitForSpawn(child: ReturnType<typeof spawn>, runnerBin: string): Promise<number> {
   return await new Promise((resolve, reject) => {
     if (typeof child.once !== "function") {
       if (typeof child.pid === "number") resolve(child.pid);
@@ -515,111 +343,6 @@ async function withStartupLock<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-async function startAmaRunner(opts: Record<string, unknown>) {
-  await applyAmaRunnerOnboarding(opts);
-  const runner = await resolveAmaRunnerBinary(typeof opts.amaRunnerVersion === "string" ? opts.amaRunnerVersion : null);
-  const env = withoutControlPlaneSecrets(process.env);
-  env.AMA_RUNNER_CREDENTIALS = AMA_RUNNER_CREDENTIALS_FILE;
-  // Device login is interactive and may take arbitrarily long. Keep it outside
-  // the startup lock so spawnSync cannot starve proper-lockfile's lease timer.
-  ensureRunnerLogin(runner.path, opts.amaOrigin as string, env);
-  const args = amaRunnerArgs(opts);
-  await withStartupLock(() => startPreparedAmaRunner(opts, runner, env, args));
-}
-
-async function startPreparedAmaRunner(
-  opts: Record<string, unknown>,
-  runner: Awaited<ReturnType<typeof resolveAmaRunnerBinary>>,
-  env: NodeJS.ProcessEnv,
-  args: string[],
-) {
-  const existingPid = readDaemonPid();
-  if (existingPid) {
-    console.error(`Runtime already running (PID ${existingPid}). Stop it first or remove ${PID_FILE}`);
-    process.exit(1);
-  }
-  rotateLogs();
-
-  const logFile = join(LOGS_DIR, "daemon.log");
-  const logFd = openSync(logFile, "a");
-  let reservation: DaemonStartReservation | null = null;
-  let child: ReturnType<typeof spawn> | null = null;
-  let pid: number | null = null;
-  let state: DaemonState | null = null;
-  try {
-    reservation = reserveDaemonStart();
-    child = spawn(runner.path, args, { detached: true, stdio: ["ignore", logFd, logFd], env, windowsHide: true });
-    pid = await waitForSpawn(child, runner.path);
-    reservation.commit(pid);
-    state = {
-      providers: Array.isArray(opts.providers) ? (opts.providers as string[]) : [],
-      maxConcurrent: parseInt(String(opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT), 10),
-      apiUrl: opts.apiUrl as string,
-      startedAt: new Date().toISOString(),
-      runtime: "ama-runner",
-      runnerPath: runner.path,
-      runnerVersion: runner.version,
-      ...(typeof opts.machineId === "string" ? { machineId: opts.machineId } : {}),
-    };
-    writeFileSync(DAEMON_STATE_FILE, JSON.stringify(state, null, 2));
-    child.unref();
-  } catch (error) {
-    const childPid = pid ?? child?.pid;
-    if (typeof childPid === "number" && isPidAlive(childPid)) await stopRunner(childPid);
-    reservation?.release(childPid);
-    throw error;
-  } finally {
-    closeSync(logFd);
-  }
-  if (pid === null || state === null) throw new Error("AMA runner startup completed without state");
-  console.log(`● Machine runner started (PID ${pid}, v${getVersion()})`);
-  console.log(`  API:         ${maskApiUrl(state.apiUrl)}`);
-  console.log(`  Concurrency: ${state.maxConcurrent}`);
-  if (state.runnerVersion?.version) console.log(`  Runner:      ${state.runnerVersion.version}`);
-  console.log(`  Logs:        ${logFile}`);
-}
-
-async function registerMachine(opts: Record<string, unknown>): Promise<RegisteredMachine> {
-  if (typeof opts.apiUrl !== "string" || typeof opts.apiKey !== "string") {
-    throw new Error("API credentials are required to register the local machine");
-  }
-  const creds = { apiUrl: opts.apiUrl, apiKey: opts.apiKey };
-
-  const runtimes = machineRuntimes();
-  opts.providers = runtimes.map((runtime) => runtime.name);
-  const machineResponse = await fetch(`${creds.apiUrl.replace(/\/$/, "")}/api/machines`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${creds.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      name: resolveMachineName(),
-      os: `${platform()} ${arch()} ${release()}`,
-      version: getVersion(),
-      runtimes,
-      device_id: generateDeviceId(),
-    }),
-  });
-  if (!machineResponse.ok) {
-    throw new Error(`Machine registration failed with HTTP ${machineResponse.status}: ${await machineResponse.text()}`);
-  }
-  return (await machineResponse.json()) as RegisteredMachine;
-}
-
-async function applyAmaRunnerOnboarding(opts: Record<string, unknown>) {
-  const machine = await registerMachine(opts);
-  const onboarding = machine.runner;
-  if (!onboarding) {
-    throw new Error("Machine registration did not return runner onboarding details");
-  }
-  opts.machineId = machine.id;
-  if (onboarding.version) opts.amaRunnerVersion = onboarding.version;
-  opts.amaOrigin = onboarding.origin.replace(/\/$/, "");
-  opts.amaProjectId = onboarding.projectId;
-  opts.amaEnvironmentId = onboarding.environmentId;
-}
-
 async function startLocalDaemon(opts: Record<string, unknown>) {
   assertDaemonDependencies();
   const parsed = parseLocalDaemonOptions(opts);
@@ -671,7 +394,6 @@ async function startPreparedLocalDaemon(opts: Record<string, unknown>, parsed: {
       taskTimeout,
       apiUrl: opts.apiUrl as string,
       startedAt: new Date().toISOString(),
-      runtime: "local-daemon",
       machineId: ready.machineId,
     };
     writeFileSync(DAEMON_STATE_FILE, JSON.stringify(state, null, 2));
@@ -697,12 +419,7 @@ async function startPreparedLocalDaemon(opts: Record<string, unknown>, parsed: {
   console.log(`  Logs:        ${logFile}`);
 }
 
-async function startRunner(mode: RunnerMode, opts: Record<string, unknown>): Promise<void> {
-  if (mode === "ama") {
-    opts.maxConcurrent = String(parseLocalDaemonOptions(opts).maxConcurrent);
-    await startAmaRunner(opts);
-    return;
-  }
+async function startRunner(opts: Record<string, unknown>): Promise<void> {
   await startLocalDaemon(opts);
 }
 
@@ -712,7 +429,6 @@ export function registerStartCommand(program: Command) {
     .description("Start the local Machine runner")
     .option("--api-url <url>", "API server URL")
     .option("--api-key <key>", "AK API key")
-    .option("--mode <mode>", "Runner mode: local or ama", "local")
     .option("--max-concurrent <n>", `Max concurrent agents (1-${MAX_CONCURRENT_LIMIT})`, String(DEFAULT_MAX_CONCURRENT))
     .option("--poll-interval <ms>", `Local task poll interval (${MIN_POLL_INTERVAL}-${MAX_POLL_INTERVAL} ms)`, String(DEFAULT_POLL_INTERVAL))
     .option("--task-timeout <ms>", `Local task timeout (0 or ${MIN_TASK_TIMEOUT}-${MAX_TASK_TIMEOUT} ms)`, String(DEFAULT_TASK_TIMEOUT))
@@ -746,7 +462,7 @@ export function registerStartCommand(program: Command) {
       if (prevState && prevState.apiUrl !== creds.apiUrl) {
         rmSync(SESSIONS_DIR, { recursive: true, force: true });
       }
-      await startRunner(runnerMode(opts.mode), { ...opts, apiUrl: creds.apiUrl, apiKey: creds.apiKey });
+      await startRunner({ ...opts, apiUrl: creds.apiUrl, apiKey: creds.apiKey });
     });
 }
 
@@ -798,7 +514,7 @@ export function registerLocalStartCommand(program: Command) {
         process.exit(1);
       }
 
-      await startRunner("local", { ...opts, apiUrl: creds.apiUrl, apiKey: creds.apiKey });
+      await startRunner({ ...opts, apiUrl: creds.apiUrl, apiKey: creds.apiKey });
     });
 }
 
@@ -856,7 +572,6 @@ export function registerStatusCommand(program: Command) {
       console.log(`● Machine runner running (PID ${pid}, v${getVersion()})`);
       if (uptimeStr) console.log(`  Uptime:      ${uptimeStr}`);
       if (state) {
-        console.log(`  Mode:        ${state.runtime === "ama-runner" ? "ama" : "local"}`);
         const providersLabel = formatProviders(state.providers ?? []);
         console.log(`  Providers:   ${providersLabel}`);
         console.log(`  Concurrency: ${state.maxConcurrent}`);
@@ -886,14 +601,12 @@ export function registerRestartCommand(program: Command) {
     .description("Restart the Machine runner")
     .option("--api-url <url>", "API server URL")
     .option("--api-key <key>", "AK API key")
-    .option("--mode <mode>", "Runner mode: local or ama")
     .option("--max-concurrent <n>", `Max concurrent agents (1-${MAX_CONCURRENT_LIMIT})`)
     .option("--poll-interval <ms>", `Local task poll interval (${MIN_POLL_INTERVAL}-${MAX_POLL_INTERVAL} ms)`)
     .option("--task-timeout <ms>", `Local task timeout (0 or ${MIN_TASK_TIMEOUT}-${MAX_TASK_TIMEOUT} ms)`)
     .action(async (opts) => {
       useEnvironmentCredentials(opts);
       const prevState = readDaemonState();
-      const mode = runnerMode(opts.mode ?? (prevState?.runtime === "ama-runner" ? "ama" : "local"));
       const localOptions = parseLocalDaemonOptions({
         maxConcurrent: opts.maxConcurrent ?? prevState?.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
         pollInterval: opts.pollInterval ?? prevState?.pollInterval ?? DEFAULT_POLL_INTERVAL,
@@ -937,7 +650,7 @@ export function registerRestartCommand(program: Command) {
       if (prevState && prevState.apiUrl !== creds.apiUrl) {
         rmSync(SESSIONS_DIR, { recursive: true, force: true });
       }
-      await startRunner(mode, {
+      await startRunner({
         ...opts,
         apiUrl: creds.apiUrl,
         apiKey: creds.apiKey,

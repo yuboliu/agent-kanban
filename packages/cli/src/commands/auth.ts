@@ -43,8 +43,6 @@ async function maintainerLogin(): Promise<{ agentId: string; sessionId: string; 
       body: JSON.stringify({
         session_id: sessionId,
         session_public_key: pubJwk.x,
-        ama_session_id: process.env.AMA_SESSION_ID || process.env.AK_AMA_SESSION_ID || null,
-        ama_trigger_run_id: process.env.AMA_TRIGGER_RUN_ID || process.env.AK_AMA_TRIGGER_RUN_ID || null,
       }),
     },
   );
@@ -88,8 +86,8 @@ function repositoryProvider(repo: any): "github" {
 }
 
 function workerGithubAuthHome(): string {
-  if (process.env.AMA_WORKSPACE_HOME) return process.env.AMA_WORKSPACE_HOME;
-  if (process.env.AMA_WORKSPACE) return join(process.env.AMA_WORKSPACE, ".home");
+  if (process.env.AK_WORKSPACE_HOME) return process.env.AK_WORKSPACE_HOME;
+  if (process.env.AK_WORKSPACE_DIR) return join(process.env.AK_WORKSPACE_DIR, ".home");
   throw new Error("Refusing to modify GitHub credentials without an isolated worker HOME.");
 }
 
