@@ -8,11 +8,11 @@ import {
 } from "./boardMaintainerRepo";
 import type { D1 } from "./db";
 import { createLogger } from "./logger";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 const logger = createLogger("maintainerTriggerConcurrency");
 
-export async function ensureMaintainerHttpTriggerSerial(db: D1, env: Env, maintainer: BoardMaintainer): Promise<void> {
+export async function ensureMaintainerHttpTriggerSerial(db: D1, env: AppServices, maintainer: BoardMaintainer): Promise<void> {
   if (maintainer.ama_http_trigger_serialized) return;
   if (!maintainer.ama_http_trigger_id) throw new Error(`Maintainer ${maintainer.id} has no AMA HTTP trigger`);
   const projectId = await getAmaProjectId(db, maintainer.owner_id);
@@ -21,7 +21,7 @@ export async function ensureMaintainerHttpTriggerSerial(db: D1, env: Env, mainta
   await markBoardMaintainerHttpTriggerSerialized(db, maintainer.owner_id, maintainer.board_id, maintainer.id);
 }
 
-export async function backfillMaintainerHttpTriggerConcurrency(db: D1, env: Env, limit = 25): Promise<number> {
+export async function backfillMaintainerHttpTriggerConcurrency(db: D1, env: AppServices, limit = 25): Promise<number> {
   if (!isAmaTaskDispatchConfigured(env)) return 0;
   const maintainers = await listUnserializedBoardMaintainers(db, limit);
   let completed = 0;

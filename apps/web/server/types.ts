@@ -1,10 +1,43 @@
 import type { Session, User } from "better-auth";
+import type { AppDatabase } from "./database/appDatabase";
 
-export interface Env {
-  DB: D1Database;
-  AE: AnalyticsEngineDataset;
-  TUNNEL_RELAY: DurableObjectNamespace;
-  ASSETS: Fetcher;
+// ─── Platform-neutral service contract ────────────────────────────────────────
+// Everything the API layer needs to run, without Cloudflare-specific types.
+// Field names mirror the old Worker Env so call sites (c.env.X) stay unchanged;
+// the worker entry adapts its CF bindings to these interfaces, and the
+// pure-local Node runtime constructs them directly (better-sqlite3 + in-process
+// relay + rolling metrics). See plans/local-only-cloudflare-ama-removal.md ADR-001.
+
+export interface MetricsService {
+  writeDataPoint(point: {
+    type?: string;
+    blobs?: (string | null)[] | undefined;
+    doubles?: number[] | undefined;
+    indexes?: string[] | undefined;
+  }): void;
+}
+
+export interface AssetsService {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
+// Opaque identifier for a relay (Durable Object id today, in-process key later).
+export type RelayId = { readonly __relayId: unique symbol };
+
+export interface RelayStub {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
+export interface RelayNamespace {
+  idFromName(name: string): RelayId;
+  get(id: RelayId): RelayStub;
+}
+
+export interface AppServices {
+  DB: AppDatabase;
+  AE: MetricsService;
+  TUNNEL_RELAY: RelayNamespace;
+  ASSETS: AssetsService;
   AUTH_SECRET: string;
   ALLOWED_HOSTS: string;
   GITHUB_CLIENT_ID: string;
@@ -25,6 +58,36 @@ export interface Env {
   // base64 of the App's PKCS#8 PEM private key
   GITHUB_APP_PRIVATE_KEY?: string;
   // public App slug, used to build the install URL github.com/apps/<slug>/installations/new
+  GITHUB_APP_SLUG?: string;
+  MIN_CLI_VERSION?: string;
+}
+
+// ─── Cloudflare Worker runtime env (stage 2 replaces this) ───────────────────
+// Not assignable to AppServices as-is (DurableObjectNamespace's id types are
+// narrower than the platform-neutral RelayNamespace), so the worker entry
+// adapts it into an AppServices object before handing it to createApi().
+export interface Env {
+  DB: D1Database;
+  AE: AnalyticsEngineDataset;
+  TUNNEL_RELAY: DurableObjectNamespace;
+  ASSETS: Fetcher;
+  AUTH_SECRET: string;
+  ALLOWED_HOSTS: string;
+  GITHUB_CLIENT_ID: string;
+  GITHUB_CLIENT_SECRET: string;
+  MAILS_ADMIN_TOKEN: string;
+  CF_ACCOUNT_ID: string;
+  CF_API_TOKEN: string;
+  AK_API_URL?: string;
+  AMA_ORIGIN?: string;
+  AMA_OIDC_ISSUER?: string;
+  AMA_OIDC_CLIENT_ID?: string;
+  AMA_OIDC_CLIENT_SECRET?: string;
+  AMA_OIDC_SCOPES?: string;
+  AMA_RUNNER_VERSION?: string;
+  GITHUB_APP_WEBHOOK_SECRET?: string;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_APP_SLUG?: string;
   MIN_CLI_VERSION?: string;
 }

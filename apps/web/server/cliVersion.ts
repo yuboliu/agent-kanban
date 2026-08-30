@@ -1,8 +1,8 @@
 import { isVersionBelowMin } from "@agent-kanban/shared";
 import type { Context, Next } from "hono";
-import type { Env } from "./types.js";
+import type { AppServices } from "./types.js";
 
-export async function cliVersionMiddleware(c: Context<{ Bindings: Env }>, next: Next) {
+export async function cliVersionMiddleware(c: Context<{ Bindings: AppServices }>, next: Next) {
   const clientVersion = c.req.header("X-CLI-Version");
   // Non-CLI clients (browser, curl, older CLI without the header) are always allowed through
   if (!clientVersion) return next();

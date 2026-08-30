@@ -42,7 +42,7 @@ import { amaRunnerCanScheduleRuntime, amaRuntimeName } from "./runtimeRouter";
 import { getSubagent } from "./subagentRepo";
 import { computeBlocked } from "./taskDeps";
 import { addTaskAction, getTask, releaseTask, updateTask } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 type Annotations = Record<string, unknown>;
 
@@ -71,7 +71,7 @@ export function boardMaintainerHttpTriggerName(boardId: string): string {
 
 export async function dispatchTaskToAma(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   task: Task,
   options: { apiOrigin: string; takeover?: boolean; recordFailure?: boolean },
@@ -319,7 +319,7 @@ async function buildAmaAgentInput(
 // persists the returned id, so a thrown error leaves no partial AK row.
 export async function createAmaAgentForAkProfile(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   akAgent: AkAgentProfile,
   projectId: string,
@@ -332,7 +332,7 @@ export async function createAmaAgentForAkProfile(
 
 export async function ensureAmaAgentForAkAgent(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   akAgentId: string,
   projectId: string,
@@ -359,7 +359,7 @@ export async function ensureAmaAgentForAkAgent(
 
 export async function syncAmaAgentForAkProfile(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   akAgentId: string,
   akAgent: AkAgentProfile,
@@ -405,7 +405,7 @@ function amaAgentHandoffPolicy(handoffTo: string[] | null | undefined) {
 }
 
 export async function amaRuntimeSecretEnvForCredentialNames(
-  env: Env,
+  env: AppServices,
   ownerId: string,
   projectId: string,
   vaultId: string,
@@ -427,7 +427,7 @@ export async function amaRuntimeSecretEnvForCredentialNames(
 
 async function resolveTaskSecretVault(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   projectId: string,
   boardId: string,
@@ -487,7 +487,7 @@ function cloudSandboxHomeEnv(): Record<string, string> {
 }
 
 async function firstRunnableCandidate(
-  env: Env,
+  env: AppServices,
   ownerId: string,
   projectId: string,
   candidates: { machineId: string; environmentId: string }[],
@@ -505,7 +505,7 @@ export function amaRunnerCanRunRuntime(runner: AmaRunner, runtime: string, model
   return runner.currentLoad < runner.maxConcurrent && amaRunnerCanScheduleRuntime(runner, runtime, model);
 }
 
-export async function sendTaskMessageToAma(env: Env, ownerId: string, task: Task, message: string): Promise<Task> {
+export async function sendTaskMessageToAma(env: AppServices, ownerId: string, task: Task, message: string): Promise<Task> {
   const sessionId = amaSessionId(task);
   const projectId = amaProjectId(task);
   if (!sessionId || !projectId || !isAmaRuntimeConfigured(env)) {
@@ -515,7 +515,7 @@ export async function sendTaskMessageToAma(env: Env, ownerId: string, task: Task
   return task;
 }
 
-export async function sendTaskRejectToAma(db: D1, env: Env, ownerId: string, task: Task, reason: string | undefined): Promise<Task> {
+export async function sendTaskRejectToAma(db: D1, env: AppServices, ownerId: string, task: Task, reason: string | undefined): Promise<Task> {
   const sessionId = amaSessionId(task);
   const projectId = amaProjectId(task);
   if (!sessionId || !projectId || !isAmaRuntimeConfigured(env)) {
@@ -550,7 +550,7 @@ export async function sendTaskRejectToAma(db: D1, env: Env, ownerId: string, tas
 // on the task as a historical pointer so completed tasks can still load events.
 export async function releaseTaskRuntimeBinding(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   task: Task,
   reason: "user_requested" | "timeout" | "policy" | "runtime_error" = "user_requested",
@@ -581,7 +581,7 @@ export async function releaseTaskRuntimeBinding(
   });
 }
 
-async function revokeGithubTokenCredential(db: D1, env: Env, akSessionId: string, credentialId: string): Promise<void> {
+async function revokeGithubTokenCredential(db: D1, env: AppServices, akSessionId: string, credentialId: string): Promise<void> {
   if (!isAmaRuntimeConfigured(env)) return;
   const session = await getAmaAgentSession(db, akSessionId);
   if (!session) return;
@@ -592,7 +592,7 @@ async function revokeGithubTokenCredential(db: D1, env: Env, akSessionId: string
 
 // Copies the AMA usage summary for the session into ama_agent_sessions so AK
 // session listings show token/cost totals without mirroring AMA event history.
-async function collectAkAgentSessionUsage(db: D1, env: Env, akSessionId: string): Promise<void> {
+async function collectAkAgentSessionUsage(db: D1, env: AppServices, akSessionId: string): Promise<void> {
   if (!isAmaRuntimeConfigured(env)) return;
   const session = await getAmaAgentSession(db, akSessionId);
   if (!session?.ama_session_id || session.status !== "active") return;
@@ -602,7 +602,7 @@ async function collectAkAgentSessionUsage(db: D1, env: Env, akSessionId: string)
   if (totals) await setAmaAgentSessionUsageTotals(db, akSessionId, totals);
 }
 
-async function revokeAkAgentSessionSecret(db: D1, env: Env, akSessionId: string): Promise<void> {
+async function revokeAkAgentSessionSecret(db: D1, env: AppServices, akSessionId: string): Promise<void> {
   if (!isAmaRuntimeConfigured(env)) return;
   const session = await getAmaAgentSession(db, akSessionId);
   if (!session?.secret_ref) return;
@@ -657,7 +657,7 @@ async function claimTaskDispatch(db: D1, taskId: string, options: { takeover?: b
 // and the task would never be swept again; release claims older than this.
 const STALE_DISPATCH_CLAIM_MS = 5 * 60_000;
 
-export async function releaseStaleDispatchClaims(db: D1, env: Env): Promise<void> {
+export async function releaseStaleDispatchClaims(db: D1, env: AppServices): Promise<void> {
   const threshold = new Date(Date.now() - STALE_DISPATCH_CLAIM_MS).toISOString();
   const rows = await db
     .prepare(`
@@ -689,7 +689,7 @@ export async function clearAmaDispatchClaim(db: D1, task: Task): Promise<Task> {
 // Cron sweep: dispatch assigned todo tasks that have no runtime binding yet —
 // tasks deferred because they were blocked, scheduled in the future, or all
 // capable runners were busy, plus tasks released by the reconcile sweep.
-export async function dispatchPendingAmaTasks(db: D1, env: Env): Promise<void> {
+export async function dispatchPendingAmaTasks(db: D1, env: AppServices): Promise<void> {
   if (!isAmaTaskDispatchConfigured(env)) return;
   if (!env.AK_API_URL) {
     logger.warn("AK_API_URL is not set; skipping AMA dispatch sweep");
@@ -733,7 +733,7 @@ const STALE_PENDING_SESSION_MS = 10 * 60_000;
 // task stranded; release it so the dispatch sweep can re-dispatch. Done and
 // cancelled tasks that kept an active binding (best-effort cleanup failed
 // during complete/cancel) are torn down here.
-export async function reconcileAmaBoundTasks(db: D1, env: Env): Promise<void> {
+export async function reconcileAmaBoundTasks(db: D1, env: AppServices): Promise<void> {
   if (!isAmaRuntimeConfigured(env)) return;
   const rows = await db
     .prepare(`
@@ -799,7 +799,7 @@ export async function reconcileAmaBoundTasks(db: D1, env: Env): Promise<void> {
   }
 }
 
-export async function createAkAgentSessionIdentity(db: D1, env: Env, ownerId: string, agentId: string) {
+export async function createAkAgentSessionIdentity(db: D1, env: AppServices, ownerId: string, agentId: string) {
   const sessionId = crypto.randomUUID();
   const keypair = await generateKeypair();
   await createAmaAgentSession(db, env, {
@@ -990,7 +990,7 @@ function cloudTaskInitialPrompt(task: Task, resourceRefs: { owner: string; repo:
 // not installed on the repo, minting throws and dispatch fails loudly rather
 // than cloning with a shared long-lived credential.
 async function githubCloneCredentialData(
-  env: Env,
+  env: AppServices,
   resourceRefs: { owner: string; repo: string }[],
 ): Promise<{ secretData: Record<string, string>; metadata: Record<string, unknown> } | null> {
   const repo = resourceRefs[0];
@@ -1018,6 +1018,6 @@ export function sessionCredentialName(sessionId: string) {
   return `${AK_SESSION_CREDENTIAL_PREFIX}${sessionId.replaceAll(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
-export function apiUrl(env: Env, requestOrigin: string) {
+export function apiUrl(env: AppServices, requestOrigin: string) {
   return env.AK_API_URL ?? requestOrigin;
 }

@@ -2,10 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import { amaOidcResource, authTrustedOrigins } from "./betterAuth";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
-function envWithAllowedHosts(allowedHosts: string): Env {
-  return { ALLOWED_HOSTS: allowedHosts } as Env;
+function envWithAllowedHosts(allowedHosts: string): AppServices {
+  return { ALLOWED_HOSTS: allowedHosts } as AppServices;
 }
 
 describe("amaOidcResource", () => {

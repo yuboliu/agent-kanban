@@ -7,7 +7,7 @@ import { type TaskRuntimeSource, taskRuntimeSource } from "./runtimeBinding";
 import { compareAndSetTaskRuntimeSource, listPendingTaskRuntimeBindings, persistInferredAmaTaskRuntimeSource } from "./runtimeBindingRepo";
 import { resolveRuntimeSourceAvailability, selectRuntimeSource } from "./runtimeRouter";
 import { dispatchTaskToAma, releaseTaskRuntimeBinding } from "./taskDispatch";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 const logger = createLogger("runtimeCoordinator");
 
@@ -19,7 +19,7 @@ interface DispatchOptions {
 
 export async function resolveAssignableWorkerRuntimeSource(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   agentId: string,
   missingStatus: 400 | 404,
@@ -43,14 +43,14 @@ export async function resolveAssignableWorkerRuntimeSource(
   return source;
 }
 
-export async function dispatchAssignedTask(db: D1, env: Env, ownerId: string, task: Task, options: DispatchOptions): Promise<Task> {
+export async function dispatchAssignedTask(db: D1, env: AppServices, ownerId: string, task: Task, options: DispatchOptions): Promise<Task> {
   if (taskRuntimeSource(task) !== "ama") return task;
   return await dispatchTaskToAma(db, env, ownerId, task, options);
 }
 
 export async function releaseAssignedTaskRuntime(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   task: Task,
   reason: "user_requested" | "timeout" | "policy" | "runtime_error" = "user_requested",
@@ -59,7 +59,7 @@ export async function releaseAssignedTaskRuntime(
   return await releaseTaskRuntimeBinding(db, env, ownerId, task, reason);
 }
 
-export async function routePendingTasks(db: D1, env: Env): Promise<void> {
+export async function routePendingTasks(db: D1, env: AppServices): Promise<void> {
   const availabilityByRuntime = new Map<string, Awaited<ReturnType<typeof resolveRuntimeSourceAvailability>>>();
   for (const row of await listPendingTaskRuntimeBindings(db)) {
     if (!AGENT_RUNTIMES.includes(row.runtime as AgentRuntime)) continue;

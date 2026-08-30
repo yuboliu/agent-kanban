@@ -5,7 +5,7 @@ import type { D1 } from "./db";
 import { legacyRuntimeAvailableOnMachines } from "./legacyRuntime";
 import { listMachinesForRuntimeRouting } from "./machineRepo";
 import type { TaskRuntimeSource } from "./runtimeBinding";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 export interface RuntimeSourceAvailability {
   ama: boolean;
@@ -48,7 +48,7 @@ function runtimeQuotaExhausted(runner: AmaRunner, runtime: string): boolean {
 
 export async function resolveRuntimeSourceAvailability(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   runtime: AgentRuntime,
   model: string | null = null,
@@ -79,7 +79,7 @@ export async function resolveRuntimeSourceAvailability(
   return { ama, legacy };
 }
 
-export async function listAvailableRuntimeSources(db: D1, env: Env, ownerId: string): Promise<Map<AgentRuntime, RuntimeSourceAvailability>> {
+export async function listAvailableRuntimeSources(db: D1, env: AppServices, ownerId: string): Promise<Map<AgentRuntime, RuntimeSourceAvailability>> {
   const machines = await listMachinesForRuntimeRouting(db, ownerId);
   const projectId = isAmaTaskDispatchConfigured(env) ? await getAmaProjectId(db, ownerId) : null;
   const environmentIds = [...new Set(machines.map((machine) => machine.ama_environment_id).filter((id): id is string => Boolean(id)))];

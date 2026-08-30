@@ -22,7 +22,7 @@ import { createLogger } from "./logger";
 import { ensureMaintainerHttpTriggerSerial } from "./maintainerTriggerConcurrency";
 import { releaseTaskRuntimeBinding } from "./taskDispatch";
 import { cancelTask, completeTask, getTask } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 const logger = createLogger("githubWebhook");
 const MAINTAINER_SAFE_CLOSE_GRACE_MS = 30_000;
@@ -54,7 +54,7 @@ export async function verifyGithubSignature(secret: string, body: string, signat
 // Replaces the old daemon's 30s gh-CLI poll with real-time delivery.
 export async function handleGithubPullRequestEvent(
   db: D1,
-  env: Env,
+  env: AppServices,
   payload: { action?: string; pull_request?: { html_url?: string; merged?: boolean } },
 ): Promise<{ handled: boolean; tasks: string[] }> {
   if (payload.action !== "closed") return { handled: false, tasks: [] };
@@ -130,7 +130,7 @@ function toRepoInputs(repos: WebhookRepo[] | undefined): { fullName: string; rep
 
 export async function handleGithubMaintainerEvent(
   db: D1,
-  env: Env,
+  env: AppServices,
   input: { event: string; deliveryId?: string | null; payload: MaintainerWebhookPayload },
 ): Promise<{ handled: boolean; maintainers: string[] }> {
   if (!MAINTAINER_GITHUB_EVENTS.has(input.event)) return { handled: false, maintainers: [] };
@@ -234,7 +234,7 @@ function githubMaintainerIsDraftPullRequest(input: { event: string; payload: Mai
 }
 
 async function findAmaMaintainerSessionByKey(
-  env: Env,
+  env: AppServices,
   ownerId: string,
   projectId: string,
   maintainerId: string,
@@ -278,7 +278,7 @@ function sessionState(session: Record<string, unknown> | null): string | null {
   return typeof status?.phase === "string" ? status.phase : null;
 }
 
-function isOwnGithubAppBotEvent(env: Env, input: { event: string; payload: MaintainerWebhookPayload }): boolean {
+function isOwnGithubAppBotEvent(env: AppServices, input: { event: string; payload: MaintainerWebhookPayload }): boolean {
   const slug = env.GITHUB_APP_SLUG;
   if (!slug) return false;
   if (input.payload.sender?.type !== "Bot" || input.payload.sender?.login !== `${slug}[bot]`) return false;

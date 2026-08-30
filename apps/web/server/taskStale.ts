@@ -2,7 +2,7 @@ import { STALE_TIMEOUT_MS } from "@agent-kanban/shared";
 import type { D1 } from "./db";
 import { releaseTaskRuntimeBinding } from "./taskDispatch";
 import { getTask, releaseTask } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 export async function detectAndReleaseStale(db: D1, boardId: string): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_TIMEOUT_MS).toISOString();
@@ -31,7 +31,7 @@ export async function detectAndReleaseStale(db: D1, boardId: string): Promise<vo
 // safely batch). Under a long cron outage this degrades to a serialized
 // chain, but the stale timeout (24h) means such volumes are rare and the
 // cron will make steady progress on subsequent ticks either way.
-export async function detectAndReleaseStaleAll(db: D1, env: Env): Promise<void> {
+export async function detectAndReleaseStaleAll(db: D1, env: AppServices): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_TIMEOUT_MS).toISOString();
 
   const staleTasks = await db

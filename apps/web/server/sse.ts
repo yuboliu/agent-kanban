@@ -1,7 +1,7 @@
 import { MAX_TASK_PARTITION_ROWS } from "./db";
 import { listMessages } from "./messageRepo";
 import { getTaskActions } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 interface SSEEvent {
   id: string;
@@ -23,7 +23,7 @@ function mergeByTime(notes: SSEEvent[], messages: SSEEvent[]): SSEEvent[] {
   return merged;
 }
 
-export async function createSSEResponse(env: Env, taskId: string, lastEventId: string | null): Promise<Response> {
+export async function createSSEResponse(env: AppServices, taskId: string, lastEventId: string | null): Promise<Response> {
   const db = env.DB;
 
   // Resolve lastEventId before creating the stream

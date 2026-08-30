@@ -1,6 +1,6 @@
 import type { Context, Next } from "hono";
 import { createAuth } from "./betterAuth";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 type IdentityType = "user" | "machine" | "maintainer:key" | "agent:worker" | "agent:leader";
 
@@ -128,7 +128,7 @@ function detectTokenType(token: string): "apikey" | "agent" | "user" {
   return "user";
 }
 
-export async function authMiddleware(c: Context<{ Bindings: Env }>, next: Next) {
+export async function authMiddleware(c: Context<{ Bindings: AppServices }>, next: Next) {
   const header = c.req.header("Authorization");
   const queryToken = c.req.query("token");
   const token = header?.startsWith("Bearer ") ? header.slice(7) : queryToken;
@@ -170,7 +170,7 @@ export async function authMiddleware(c: Context<{ Bindings: Env }>, next: Next) 
   return handleUserSession(c, auth, authHeaders, next, "Invalid or expired token");
 }
 
-async function handleUserSession(c: Context<{ Bindings: Env }>, auth: any, headers: Headers, next: Next, errorMessage: string) {
+async function handleUserSession(c: Context<{ Bindings: AppServices }>, auth: any, headers: Headers, next: Next, errorMessage: string) {
   const session = await auth.api.getSession({ headers });
   if (session) {
     c.set("ownerId", session.user.id);
@@ -194,7 +194,7 @@ async function handleUserSession(c: Context<{ Bindings: Env }>, auth: any, heade
   return c.json({ error: { code: "UNAUTHORIZED", message: errorMessage } }, 401);
 }
 
-async function handleApiKey(c: Context<{ Bindings: Env }>, auth: any, token: string, next: Next) {
+async function handleApiKey(c: Context<{ Bindings: AppServices }>, auth: any, token: string, next: Next) {
   let result: any;
   try {
     const rule = matchRouteRule(c.req.method, c.req.path);
@@ -218,7 +218,7 @@ async function handleApiKey(c: Context<{ Bindings: Env }>, auth: any, token: str
   return enforceRouteRule(c, next);
 }
 
-async function handleAgentIdentity(c: Context<{ Bindings: Env }>, identity: any, persistentAgentId: string | null, next: Next) {
+async function handleAgentIdentity(c: Context<{ Bindings: AppServices }>, identity: any, persistentAgentId: string | null, next: Next) {
   const sessionId = identity.agent.id;
 
   const row = await c.env.DB.prepare(
@@ -268,7 +268,7 @@ function decodeJwtClaim(token: string, claim: string): string | null {
   }
 }
 
-function enforceRouteRule(c: Context<{ Bindings: Env }>, next: Next) {
+function enforceRouteRule(c: Context<{ Bindings: AppServices }>, next: Next) {
   const rule = matchRouteRule(c.req.method, c.req.path);
   const identity = c.get("identityType") as IdentityType;
   if (!rule) {

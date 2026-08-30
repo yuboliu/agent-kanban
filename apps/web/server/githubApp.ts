@@ -1,11 +1,11 @@
 import type { D1 } from "./db";
 import { replaceInstallationRepositories, upsertInstallation } from "./githubInstallations";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "agent-kanban/1.0";
 
-export function isGithubAppConfigured(env: Env): boolean {
+export function isGithubAppConfigured(env: AppServices): boolean {
   return Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY);
 }
 
@@ -17,7 +17,7 @@ export interface GithubInstallationToken {
 // Mints a repository-scoped, ~1h installation access token for the AK GitHub
 // App. This is the push/PR credential cloud sandbox sessions receive — short
 // lived and limited to the task's repository, unlike a server-level PAT.
-export async function mintGithubInstallationToken(env: Env, owner: string, repo: string): Promise<GithubInstallationToken> {
+export async function mintGithubInstallationToken(env: AppServices, owner: string, repo: string): Promise<GithubInstallationToken> {
   const jwt = await githubAppJwt(env);
   const headers = {
     authorization: `Bearer ${jwt}`,
@@ -56,7 +56,7 @@ export interface GithubInstallationDetails {
 
 // Reads an installation's account + repo selection. Used by the setup callback
 // to record the installation under the logged-in owner.
-export async function getInstallation(env: Env, installationId: number): Promise<GithubInstallationDetails> {
+export async function getInstallation(env: AppServices, installationId: number): Promise<GithubInstallationDetails> {
   const jwt = await githubAppJwt(env);
   const res = await fetch(`${GITHUB_API}/app/installations/${installationId}`, {
     headers: { authorization: `Bearer ${jwt}`, "user-agent": USER_AGENT, accept: "application/vnd.github+json" },
@@ -91,7 +91,7 @@ export interface InstallationRepository {
 // Lists every repo the installation can access. Unlike mintGithubInstallationToken
 // (repo-scoped), this mints an installation-wide token so /installation/repositories
 // returns the full set the owner can import.
-export async function listInstallationRepositories(env: Env, installationId: number): Promise<InstallationRepository[]> {
+export async function listInstallationRepositories(env: AppServices, installationId: number): Promise<InstallationRepository[]> {
   const token = await mintInstallationWideToken(env, installationId);
   const repos: InstallationRepository[] = [];
   for (let page = 1; ; page++) {
@@ -114,7 +114,12 @@ export async function listInstallationRepositories(env: Env, installationId: num
 // Records an installation under the logged-in owner (authoritative source of
 // the owner_id mapping) and snapshots its selected repos. Called from the App's
 // Setup URL callback after the user installs/configures the App.
-export async function recordInstallationFromSetup(db: D1, env: Env, ownerId: string, installationId: number): Promise<GithubInstallationDetails> {
+export async function recordInstallationFromSetup(
+  db: D1,
+  env: AppServices,
+  ownerId: string,
+  installationId: number,
+): Promise<GithubInstallationDetails> {
   const details = await getInstallation(env, installationId);
   await upsertInstallation(db, {
     installationId: details.id,
@@ -134,7 +139,7 @@ export async function recordInstallationFromSetup(db: D1, env: Env, ownerId: str
   return details;
 }
 
-async function mintInstallationWideToken(env: Env, installationId: number): Promise<string> {
+async function mintInstallationWideToken(env: AppServices, installationId: number): Promise<string> {
   const jwt = await githubAppJwt(env);
   const res = await fetch(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
@@ -148,7 +153,7 @@ async function mintInstallationWideToken(env: Env, installationId: number): Prom
   return data.token;
 }
 
-async function githubAppJwt(env: Env): Promise<string> {
+async function githubAppJwt(env: AppServices): Promise<string> {
   const appId = env.GITHUB_APP_ID;
   const privateKey = env.GITHUB_APP_PRIVATE_KEY;
   if (!appId || !privateKey) {

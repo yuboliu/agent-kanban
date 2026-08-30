@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
-export async function metricsMiddleware(c: Context<{ Bindings: Env }>, next: Next) {
+export async function metricsMiddleware(c: Context<{ Bindings: AppServices }>, next: Next) {
   const start = Date.now();
   await next();
 

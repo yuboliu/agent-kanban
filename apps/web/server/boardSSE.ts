@@ -1,7 +1,7 @@
 import type { BoardAction } from "@agent-kanban/shared";
 import { createLogger } from "./logger";
 import { getBoardActions, getBoardActionsByBoardId } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 const INITIAL_LOOKBACK_MS = 5 * 60 * 1000;
 
@@ -13,7 +13,7 @@ interface BoardSSEEvent {
 
 const logger = createLogger("boardSSE");
 
-export async function createBoardSSEResponse(env: Env, boardId: string, ownerId: string): Promise<Response> {
+export async function createBoardSSEResponse(env: AppServices, boardId: string, ownerId: string): Promise<Response> {
   const db = env.DB;
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
@@ -74,7 +74,7 @@ export async function createBoardSSEResponse(env: Env, boardId: string, ownerId:
   });
 }
 
-export async function createPublicBoardSSEResponse(env: Env, boardId: string): Promise<Response> {
+export async function createPublicBoardSSEResponse(env: AppServices, boardId: string): Promise<Response> {
   const db = env.DB;
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();

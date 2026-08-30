@@ -9,7 +9,7 @@ import { Kysely } from "kysely";
 import { D1Dialect } from "kysely-d1";
 import * as z from "zod";
 import type { D1 } from "./db";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 import {
   bootstrapCreateAdmin,
   confirmUsername,
@@ -42,7 +42,7 @@ export async function hasAmaResources(db: D1, ownerId: string): Promise<boolean>
 
 // Registers AMA as a generic OIDC provider so each AK user can link their own
 // AMA account. Only added when AMA OIDC is configured; standalone AK skips it.
-function amaProviderPlugins(env: Env): BetterAuthPlugin[] {
+function amaProviderPlugins(env: AppServices): BetterAuthPlugin[] {
   const issuer = env.AMA_OIDC_ISSUER;
   if (!issuer || !env.AMA_OIDC_CLIENT_ID || !env.AMA_OIDC_CLIENT_SECRET) return [];
   const resource = amaOidcResource(env);
@@ -68,7 +68,7 @@ export function oidcDiscoveryUrl(issuer: string): string {
   return `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`;
 }
 
-function amaOidcScopes(env: Env): string[] {
+function amaOidcScopes(env: AppServices): string[] {
   return (
     env.AMA_OIDC_SCOPES?.trim()
       .split(/[\s,]+/)
@@ -76,7 +76,7 @@ function amaOidcScopes(env: Env): string[] {
   );
 }
 
-export function amaOidcResource(env: Pick<Env, "AMA_ORIGIN">): string | null {
+export function amaOidcResource(env: Pick<AppServices, "AMA_ORIGIN">): string | null {
   const origin = env.AMA_ORIGIN?.trim().replace(/\/+$/, "");
   return origin || null;
 }
@@ -110,7 +110,7 @@ async function findAuthUser(
   return (await ctx.context.adapter.findOne({ model: "user", where: [{ field: "id", value: userId }] })) as unknown as BootstrapUserRecord;
 }
 
-function usernameBootstrapPlugin(env: Env): BetterAuthPlugin {
+function usernameBootstrapPlugin(env: AppServices): BetterAuthPlugin {
   return {
     id: "username-bootstrap",
     version: "1.0.0",
@@ -253,10 +253,12 @@ function usernameBootstrapPlugin(env: Env): BetterAuthPlugin {
   };
 }
 
-export function createAuth(env: Env) {
+export function createAuth(env: AppServices) {
   return betterAuth({
     database: {
-      db: new Kysely({ dialect: new D1Dialect({ database: env.DB }) }),
+      // The Kysely D1 dialect is used while the runtime is Cloudflare; the
+      // local Node runtime swaps in its own SQLite dialect (stage 2).
+      db: new Kysely({ dialect: new D1Dialect({ database: env.DB as unknown as D1Database }) }),
       type: "sqlite",
     },
     basePath: "/api/auth",
@@ -372,7 +374,7 @@ export function createAuth(env: Env) {
 
 export type Auth = ReturnType<typeof createAuth>;
 
-function authAllowedHosts(env: Env): string[] {
+function authAllowedHosts(env: AppServices): string[] {
   const hosts = env.ALLOWED_HOSTS.split(",");
   const localHosts = ["localhost:*", "127.0.0.1:*"];
   return [...hosts, ...localHosts.filter((host) => !hosts.includes(host))];
@@ -383,7 +385,7 @@ function authAllowedHosts(env: Env): string[] {
 // over plain http (e.g. http://10.0.0.5:6265) is rejected as an invalid origin
 // even when it is allowlisted. Trust every explicitly allowlisted host over
 // both schemes so remote sign-in/sign-up over http works.
-export function authTrustedOrigins(env: Env): string[] {
+export function authTrustedOrigins(env: AppServices): string[] {
   const origins = new Set<string>();
   for (const host of env.ALLOWED_HOSTS.split(",")) {
     origins.add(`https://${host}`);

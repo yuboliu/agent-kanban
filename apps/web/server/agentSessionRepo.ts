@@ -4,11 +4,11 @@ import { HTTPException } from "hono/http-exception";
 import { getAgentPrivateKey } from "./agentRepo";
 import { createAuth } from "./betterAuth";
 import type { D1 } from "./db";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 export async function createSession(
   db: D1,
-  env: Env,
+  env: AppServices,
   agentId: string,
   machineId: string,
   sessionId: string,
@@ -42,7 +42,7 @@ export async function createSession(
 
 export async function createAmaAgentSession(
   db: D1,
-  env: Env,
+  env: AppServices,
   input: {
     ownerId: string;
     agentId: string;
@@ -120,7 +120,7 @@ export async function getAmaAgentSession(db: D1, sessionId: string): Promise<Ama
 }
 
 async function registerBetterAuthAgentSession(
-  env: Env,
+  env: AppServices,
   db: D1,
   input: { ownerId: string; agentId: string; hostId: string; sessionId: string; sessionPublicKey: string },
 ) {

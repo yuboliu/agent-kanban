@@ -1,5 +1,5 @@
 import { createLogger } from "./logger";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 export interface MachineMetrics {
   machine_id: string;
@@ -24,7 +24,7 @@ interface AEResponse {
 const WINDOW_SECONDS = 300;
 const logger = createLogger("metrics");
 
-export async function getMachineMetrics(env: Env): Promise<Map<string, MachineMetrics>> {
+export async function getMachineMetrics(env: AppServices): Promise<Map<string, MachineMetrics>> {
   const url = `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/analytics_engine/sql`;
 
   const query = `

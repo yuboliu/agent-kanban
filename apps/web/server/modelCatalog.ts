@@ -4,7 +4,7 @@ import { type AmaCatalogModel, isAmaTaskDispatchConfigured, listAmaCatalogModels
 import type { D1 } from "./db";
 import { listMachineEnvironmentCandidatesForRuntime, listMachinesForRuntimeRouting } from "./machineRepo";
 import { amaRunnerHeartbeatFresh, amaRuntimeName } from "./runtimeRouter";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 // AK's preferred cloud models, most-preferred first; the rest follow in catalog
 // order. Anthropic Haiku is first because smoke and default cloud agents require
@@ -15,7 +15,7 @@ const PREFERRED_CLOUD_MODELS = ["anthropic/claude-haiku-4-5", "@cf/openai/gpt-os
 // Models a runtime can run for this owner. The cloud catalog is owned by AMA
 // (the authority — fetched, never hardcoded here); self-hosted runtimes get the
 // models declared by the owner's live AMA runners.
-export async function listRuntimeModels(db: D1, env: Env, ownerId: string, runtime: AgentRuntime): Promise<RuntimeModel[]> {
+export async function listRuntimeModels(db: D1, env: AppServices, ownerId: string, runtime: AgentRuntime): Promise<RuntimeModel[]> {
   if (!isAmaTaskDispatchConfigured(env)) return listLocalRuntimeModels(db, ownerId, runtime);
   if (isCloudAgentRuntime(runtime)) {
     const catalog = (await listAmaCatalogModels(env, ownerId)).filter((model) => model.availability === "available");

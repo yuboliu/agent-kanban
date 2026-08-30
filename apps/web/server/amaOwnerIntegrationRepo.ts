@@ -1,6 +1,6 @@
 import { createAmaEnvironment, createAmaProject, createAmaVault, readAmaProject } from "./amaRuntime";
 import type { D1 } from "./db";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
 export interface AmaOwnerIntegration {
   ownerId: string;
@@ -72,7 +72,7 @@ export async function upsertAmaOwnerIntegration(
   };
 }
 
-export async function ensureAmaOwnerIntegration(db: D1, env: Env, ownerId: string): Promise<AmaOwnerIntegration> {
+export async function ensureAmaOwnerIntegration(db: D1, env: AppServices, ownerId: string): Promise<AmaOwnerIntegration> {
   const existing = await getAmaOwnerIntegration(db, ownerId);
   // Validate the stored project still exists: AMA resources can be deleted out
   // of band (e.g. a control-plane data reset), leaving our ids dangling. A
@@ -102,7 +102,7 @@ export async function ensureAmaOwnerIntegration(db: D1, env: Env, ownerId: strin
   });
 }
 
-export async function resolveAmaProjectId(db: D1, env: Env, ownerId: string): Promise<string> {
+export async function resolveAmaProjectId(db: D1, env: AppServices, ownerId: string): Promise<string> {
   return (await ensureAmaOwnerIntegration(db, env, ownerId)).amaProjectId;
 }
 
@@ -123,7 +123,7 @@ export async function requireAmaProjectId(db: D1, ownerId: string): Promise<stri
   return projectId;
 }
 
-export async function resolveAmaExternalTenantId(db: D1, env: Env, ownerId: string): Promise<string> {
+export async function resolveAmaExternalTenantId(db: D1, env: AppServices, ownerId: string): Promise<string> {
   return (await ensureAmaOwnerIntegration(db, env, ownerId)).externalTenantId;
 }
 
@@ -132,7 +132,7 @@ export async function resolveAmaExternalTenantId(db: D1, env: Env, ownerId: stri
 // so this always provisions a new one rather than reusing a per-owner singleton.
 export async function createAmaCloudSandboxEnvironment(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   name: string,
 ): Promise<{ projectId: string; environmentId: string }> {
@@ -147,7 +147,7 @@ export async function createAmaCloudSandboxEnvironment(
   return { projectId: integration.amaProjectId, environmentId: environment.id };
 }
 
-export async function resolveAmaSessionSecretVaultId(db: D1, env: Env, ownerId: string): Promise<string> {
+export async function resolveAmaSessionSecretVaultId(db: D1, env: AppServices, ownerId: string): Promise<string> {
   const binding = await ensureAmaOwnerIntegration(db, env, ownerId);
   if (!binding.sessionSecretVaultId) {
     throw new Error(`AMA session secret vault is missing for owner ${ownerId}`);

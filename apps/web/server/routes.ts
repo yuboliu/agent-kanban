@@ -229,9 +229,9 @@ import {
   rollbackTaskAssignment,
   updateTask,
 } from "./taskRepo";
-import type { Env } from "./types";
+import type { AppServices } from "./types";
 
-const api = new Hono<{ Bindings: Env }>();
+const api = new Hono<{ Bindings: AppServices }>();
 const logger = createLogger("api");
 
 // Permanently disabled public authentication endpoints. Account creation is
@@ -359,7 +359,7 @@ function assertKnownAgentRuntime(runtime: string | undefined): void {
   }
 }
 
-function withRuntimeSource<T extends Record<string, any>>(env: Env, agent: T, availableRuntimes?: Set<string>): T {
+function withRuntimeSource<T extends Record<string, any>>(env: AppServices, agent: T, availableRuntimes?: Set<string>): T {
   if (!isAmaTaskDispatchConfigured(env)) return agent;
   if (availableRuntimes === undefined) return agent;
   return withAgentStatus(agent as any, availableRuntimes.has(agent.runtime)) as unknown as T;
@@ -396,7 +396,7 @@ function normalizeTaskDetailAlias(body: Record<string, any>) {
 }
 
 async function assertRegisteredSubagents(
-  db: Env["DB"],
+  db: AppServices["DB"],
   ownerId: string,
   subagents: string[] | null | undefined,
   currentAgentId?: string,
@@ -418,7 +418,7 @@ async function assertRegisteredSubagents(
   }
 }
 
-async function assertSubagentNotReferenced(db: Env["DB"], ownerId: string, subagentId: string): Promise<void> {
+async function assertSubagentNotReferenced(db: AppServices["DB"], ownerId: string, subagentId: string): Promise<void> {
   const row = await db
     .prepare(`
       SELECT a.name
@@ -508,7 +508,7 @@ function publicBoardMaintainer(
   };
 }
 
-async function publicBoardMaintainerWithAmaStatus(db: D1, env: Env, ownerId: string, maintainer: BoardMaintainer) {
+async function publicBoardMaintainerWithAmaStatus(db: D1, env: AppServices, ownerId: string, maintainer: BoardMaintainer) {
   const publicMaintainer = publicBoardMaintainer(maintainer);
   if (!isAmaTaskDispatchConfigured(env) || isLocalBoardMaintainer(maintainer)) return publicMaintainer;
 
@@ -524,13 +524,13 @@ async function publicBoardMaintainerWithAmaStatus(db: D1, env: Env, ownerId: str
   };
 }
 
-async function listPublicMaintainersWithAmaStatus(db: D1, env: Env, ownerId: string, maintainers: BoardMaintainer[]) {
+async function listPublicMaintainersWithAmaStatus(db: D1, env: AppServices, ownerId: string, maintainers: BoardMaintainer[]) {
   return await Promise.all(maintainers.map((maintainer) => publicBoardMaintainerWithAmaStatus(db, env, ownerId, maintainer)));
 }
 
 async function deleteBoardMaintainerExternalResources(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   maintainer: BoardMaintainer,
   deletingMaintainerIds: ReadonlySet<string> = new Set([maintainer.id]),
@@ -576,7 +576,7 @@ async function deleteBoardMaintainerExternalResources(
   }
 }
 
-async function availableRuntimeNames(db: D1, env: Env, ownerId: string): Promise<Set<string>> {
+async function availableRuntimeNames(db: D1, env: AppServices, ownerId: string): Promise<Set<string>> {
   const sources = await listAvailableRuntimeSources(db, env, ownerId);
   return new Set([...sources].filter(([, availability]) => availability.ama || availability.legacy).map(([runtime]) => runtime));
 }
@@ -584,14 +584,14 @@ async function availableRuntimeNames(db: D1, env: Env, ownerId: string): Promise
 // Gates a user-initiated AMA dispatch on the owner having linked their own AMA
 // account. Standalone AK (no AMA env) never reaches here; an AMA-configured AK
 // where the user hasn't connected returns a clear 4xx. No-op otherwise.
-async function requireAmaConnected(db: D1, env: Env, ownerId: string): Promise<void> {
+async function requireAmaConnected(db: D1, env: AppServices, ownerId: string): Promise<void> {
   if (!isAmaTaskDispatchConfigured(env)) return;
   if (!(await hasAmaAccount(db, ownerId))) {
     throw new HTTPException(403, { message: "Connect AMA to enable cloud scheduling" });
   }
 }
 
-async function latestMaintainerRun(env: Env, ownerId: string, projectId: string, maintainer: BoardMaintainer) {
+async function latestMaintainerRun(env: AppServices, ownerId: string, projectId: string, maintainer: BoardMaintainer) {
   const triggerIds = [maintainer.ama_schedule_id, maintainer.ama_http_trigger_id].filter((id): id is string => Boolean(id));
   const pages = await Promise.all(triggerIds.map((triggerId) => listAmaTriggerRuns(env, ownerId, projectId, triggerId, { limit: 1 })));
   return pages.flatMap((page) => page.data).sort((a, b) => (maintainerRunTimestamp(b) ?? "").localeCompare(maintainerRunTimestamp(a) ?? ""))[0];
@@ -652,7 +652,7 @@ function publicMachine<T extends MachineRecord | MachineWithAgentsRecord>(machin
 }
 
 async function machineWithAmaRunnerStatus<T extends MachineRecord | MachineWithAgentsRecord>(
-  env: Env,
+  env: AppServices,
   ownerId: string,
   projectId: string,
   machine: T,
@@ -772,7 +772,7 @@ function machineUsageInfoFromRunners(runners: AmaRunner[]): UsageInfo | null {
 
 async function machinesWithRuntimeStatus<T extends MachineRecord | MachineWithAgentsRecord>(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   machines: T[],
 ): Promise<T[]> {
@@ -789,7 +789,11 @@ async function machinesWithRuntimeStatus<T extends MachineRecord | MachineWithAg
   return await Promise.all(machines.map((machine) => machineWithAmaRunnerStatus(env, ownerId, projectId, machine)));
 }
 
-async function machinesWithRuntimeStatusByOwner<T extends MachineRecord | MachineWithAgentsRecord>(db: D1, env: Env, machines: T[]): Promise<T[]> {
+async function machinesWithRuntimeStatusByOwner<T extends MachineRecord | MachineWithAgentsRecord>(
+  db: D1,
+  env: AppServices,
+  machines: T[],
+): Promise<T[]> {
   if (!isAmaTaskDispatchConfigured(env)) {
     return machines;
   }
@@ -812,7 +816,7 @@ async function machinesWithRuntimeStatusByOwner<T extends MachineRecord | Machin
   );
 }
 
-async function ensureMachineAmaEnvironment(db: D1, env: Env, ownerId: string, machine: MachineRecord): Promise<string> {
+async function ensureMachineAmaEnvironment(db: D1, env: AppServices, ownerId: string, machine: MachineRecord): Promise<string> {
   const binding = await ensureAmaOwnerIntegration(db, env, ownerId);
   // Validate the stored environment still exists. An AMA data reset (or a
   // re-provisioned project) leaves the id dangling, which makes the runner's
@@ -833,7 +837,7 @@ async function ensureMachineAmaEnvironment(db: D1, env: Env, ownerId: string, ma
 // The self-hosted runner authenticates itself (device login against AMA); AK no
 // longer mints a federated runner token. Onboarding just hands the runner the
 // AMA origin and the project/environment it should join.
-async function createMachineRunnerOnboarding(env: Env, machine: MachineRecord, ownerId: string) {
+async function createMachineRunnerOnboarding(env: AppServices, machine: MachineRecord, ownerId: string) {
   const environmentId = machine.ama_environment_id;
   if (!environmentId) return null;
   if (readyAmaRuntimeNames(machine.runtimes).length === 0) return null;
@@ -866,7 +870,7 @@ function taskIdentity(c: { get: (key: string) => any }): TaskIdentityType {
   return identity;
 }
 
-async function taskManagementIdentity(c: { env: Env; get: (key: string) => any }, task: Pick<Task, "board_id">): Promise<TaskIdentityType> {
+async function taskManagementIdentity(c: { env: AppServices; get: (key: string) => any }, task: Pick<Task, "board_id">): Promise<TaskIdentityType> {
   const identity = taskIdentity(c);
   if (identity !== "agent:worker") return identity;
 
@@ -878,7 +882,7 @@ async function taskManagementIdentity(c: { env: Env; get: (key: string) => any }
   return identity;
 }
 
-async function requireTaskManager(c: { env: Env; get: (key: string) => any }, task: Pick<Task, "board_id">): Promise<TaskIdentityType> {
+async function requireTaskManager(c: { env: AppServices; get: (key: string) => any }, task: Pick<Task, "board_id">): Promise<TaskIdentityType> {
   const identity = await taskManagementIdentity(c, task);
   if (identity === "agent:worker") {
     throw new HTTPException(403, { message: "Active board maintainer or leader identity required" });
@@ -913,7 +917,7 @@ async function isCurrentTaskWorkerForRepository(
 }
 
 async function validateTaskManagementTransition(
-  c: { env: Env; get: (key: string) => any },
+  c: { env: AppServices; get: (key: string) => any },
   action: "complete" | "release" | "cancel" | "reject" | "retry",
   task: Pick<Task, "board_id" | "status">,
 ): Promise<TaskIdentityType> {
@@ -1522,10 +1526,15 @@ api.post("/api/ama/provision", async (c) => {
   // failures are logged and skipped so one bad agent can't block the rest —
   // the next provision retries whatever is still missing.
   const backfill = await backfillAgentAmaIds(c.env.DB, c.env, ownerId, integration.amaProjectId);
-  return c.json({ ok: true, project_id: integration.amaProjectId, agents_backfilled: backfill.backfilled, agents_backfill_failed: backfill.failed });
+  return c.json({
+    ok: true,
+    project_id: integration.amaProjectId,
+    agents_backfilled: backfill.backfilled,
+    agents_backfill_failed: backfill.failed,
+  });
 });
 
-async function backfillAgentAmaIds(db: D1, env: Env, ownerId: string, projectId: string): Promise<{ backfilled: number; failed: number }> {
+async function backfillAgentAmaIds(db: D1, env: AppServices, ownerId: string, projectId: string): Promise<{ backfilled: number; failed: number }> {
   const pending = await listAgentsMissingAmaAgent(db, ownerId);
   let backfilled = 0;
   let failed = 0;
@@ -2073,7 +2082,7 @@ api.get("/api/tasks/:id/session", async (c) => {
   return c.json({ task_id: task.id, session_id: sessionId, project_id: projectId ?? null, ak_session_id: akSessionId ?? null, session });
 });
 
-async function ownerAmaProjectId(c: { env: Env; get: (key: "ownerId") => string }): Promise<string> {
+async function ownerAmaProjectId(c: { env: AppServices; get: (key: "ownerId") => string }): Promise<string> {
   const projectId = await getAmaProjectId(c.env.DB, c.get("ownerId"));
   if (!projectId) throw new HTTPException(404, { message: "AMA project is not configured" });
   return projectId;
@@ -3362,7 +3371,13 @@ function publicMaintainerVariables(credentials: MaintainerVaultCredential[], vau
   };
 }
 
-async function syncMaintainerSecretEnvRefs(env: Env, ownerId: string, amaProjectId: string, boardVaultId: string, maintainer: BoardMaintainer) {
+async function syncMaintainerSecretEnvRefs(
+  env: AppServices,
+  ownerId: string,
+  amaProjectId: string,
+  boardVaultId: string,
+  maintainer: BoardMaintainer,
+) {
   const runtimeSecretEnv = await amaRuntimeSecretEnvForCredentialNames(env, ownerId, amaProjectId, boardVaultId, [
     AK_VARIABLES_CREDENTIAL_NAME,
     USER_VARIABLES_CREDENTIAL_NAME,
@@ -3373,7 +3388,7 @@ async function syncMaintainerSecretEnvRefs(env: Env, ownerId: string, amaProject
   }
 }
 
-async function createBoardMaintainerVault(env: Env, ownerId: string, amaProjectId: string, board: { id: string; name: string }) {
+async function createBoardMaintainerVault(env: AppServices, ownerId: string, amaProjectId: string, board: { id: string; name: string }) {
   const resourceName = boardMaintainerResourceName(board.id);
   const existing = (await listAmaVaults(env, ownerId, amaProjectId, resourceName)).find((vault) => vault.name === resourceName);
   if (existing) return existing;
@@ -3387,7 +3402,7 @@ async function createBoardMaintainerVault(env: Env, ownerId: string, amaProjectI
 
 async function ensureBoardMaintainerVault(
   db: D1,
-  env: Env,
+  env: AppServices,
   ownerId: string,
   amaProjectId: string,
   board: { id: string; name: string },
@@ -3401,7 +3416,7 @@ async function ensureBoardMaintainerVault(
 
 async function ensureMaintainerApiKeySecret(input: {
   db: D1;
-  env: Env;
+  env: AppServices;
   ownerId: string;
   amaProjectId: string;
   vaultId: string;
@@ -3420,7 +3435,7 @@ async function ensureMaintainerApiKeySecret(input: {
 }
 
 async function createMaintainerApiKeySecret(input: {
-  env: Env;
+  env: AppServices;
   ownerId: string;
   amaProjectId: string;
   vaultId: string;
@@ -3725,7 +3740,12 @@ api.get("/api/agents/:id/inbox/:emailId", async (c) => {
   return c.json(email);
 });
 
-export { api };
+// Returns the shared, stateless Hono app. Handlers access their services via
+// c.env (injected per-request at fetch time); the createApi boundary keeps the
+// API layer decoupled from the Cloudflare Worker bindings.
+export function createApi(services: AppServices): Hono<{ Bindings: AppServices }> {
+  return api;
+}
 
 // ─── Helpers ───
 
@@ -3839,7 +3859,7 @@ async function wkdHash(localPart: string): Promise<string> {
   return out;
 }
 
-async function syncToGithub(env: Env, ownerId: string, email: string): Promise<void> {
+async function syncToGithub(env: AppServices, ownerId: string, email: string): Promise<void> {
   const token = await getGithubToken(env.DB, ownerId);
   if (!token) return;
 
