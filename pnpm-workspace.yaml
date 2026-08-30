@@ -1,3 +1,8 @@
 packages:
   - apps/*
   - packages/*
+
+# better-sqlite3 ships a native addon; its install script must run so the
+# prebuilt binary (or a local node-gyp build) is linked.
+onlyBuiltDependencies:
+  - better-sqlite3

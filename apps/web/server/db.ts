@@ -1,4 +1,5 @@
 import { customAlphabet } from "nanoid";
+import type { AppDatabase } from "./database/appDatabase";
 
 const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
 const nanoid = customAlphabet(alphabet, 8);
@@ -12,10 +13,13 @@ export function newLongId(): string {
   return nanoid12();
 }
 
-export type D1 = D1Database;
+// Platform-neutral database handle. Repos only depend on this D1-shaped
+// contract; the runtime supplies either Cloudflare D1 (Worker) or the local
+// better-sqlite3 adapter (pure-local Node runtime).
+export type D1 = AppDatabase;
 
 // Hard ceiling on rows returned from a single task partition (actions or
-// messages). Protects D1 read budget against tasks with runaway row counts.
+// messages). Protects the read budget against tasks with runaway row counts.
 // Any fetch that returns exactly this many rows is at the cap — callers
 // must assume older/newer rows beyond this point were silently truncated.
 export const MAX_TASK_PARTITION_ROWS = 500;
