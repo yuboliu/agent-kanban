@@ -48,14 +48,21 @@
 
 ## 阶段 3 评估(AMA 删除)
 
-- `taskDispatch.ts` 1023 行,211 处 AMA 引用:dispatch/claim/credential/vault/session
-  深度耦合,需重写为纯本地 dispatch 路径。
-- `amaRuntime.ts` 1496 行、`amaOwnerIntegrationRepo.ts` 166 行(整体删除)。
-- 涉及 shared types(AgentRuntime 去 ama、删 MachineHosting/CLOUD_AGENT_RUNTIMES)、
-  CLI(ak start --mode ama)、routes(/api/ama/provision、/api/machines/cloud、
-  /api/sessions*、/api/tasks/:id/session*)、前端(AMA chat/OIDC/cloud machine UI)。
-- 完成路径:先删独立组件(amaOwnerIntegrationRepo/amaRuntime 独立导出)→ 重写
-  taskDispatch 本地路由 → 删 API/CLI/前端 → shared types → 全量回归。
+- **阶段 3.1 已完成(commit `a79262d`)**:任务分配只检查本地 + 移除 AMA dispatch。
+  - runtimeRouter:ama 恒 false,只查本地机器心跳。
+  - taskDispatch:删除 dispatchTaskToAma/claim/backoff/prompt/vault/session/teardown/
+    sweeps,保留 agent 同步、任务消息、通用工具。
+  - runtimeCoordinator:dispatch/release 变空操作;routePendingTasks 删除。
+  - githubWebhook/taskStale:PR 关闭/超时不 teardown 绑定。
+  - worker cron + node scheduler:只剩 stale-machine/stale-task sweep。
+  - 净删 836 行,pre-commit(biome/typecheck/2558 tests)通过。
+- **阶段 3 剩余(后续会话)**:
+  - 删除 `amaRuntime.ts`(1496 行)、`amaOwnerIntegrationRepo.ts`(166 行)及
+    依赖方:routes 的 AMA API(/api/ama/provision、/api/machines/cloud、
+    /api/sessions*、/api/tasks/:id/session*)、githubWebhook maintainer AMA、
+    maintainerTriggerConcurrency、modelCatalog、boardMaintainerRepo 的 AMA 列、
+    agentRepo 的 ama_agent_id、agentSessionRepo AMA 函数、shared types、
+    CLI(ak start --mode ama/device login)、前端 AMA UI、schema 迁移清理。
 
 ## 后续会话起点
 
