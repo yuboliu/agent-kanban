@@ -10,7 +10,7 @@
 | 0 | 冻结基线与迁移预检 | ✅ 已交付(commit `0caf692`) |
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
 | 2 | 纯 Node 运行时 | 🔶 核心已交付(commit `25354e1`),scripts/vite 代理待后续 |
-| 3 | 删除 AMA 双轨运行时 | 🔶 服务端+shared 已完成(见下),CLI/前端/schema 待后续 |
+| 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
 | 4 | Local Maintainer 完整替代 | ⏳ 未开始 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
 | 6 | 可选 GitHub App | ⏳ 未开始 |
@@ -64,19 +64,33 @@
   ama_session_id/'ama' source。
 - **`32df9db`**:AppServices/Env 移除 AMA_* 配置;auth agentRuntimeSource 仅 legacy。
 
-### 剩余(后续会话)
-- **CLI**:删除 `packages/cli/src/amaRunner.ts`(runner 下载);`start.ts` 的 --mode ama
-  分支(amaRunnerArgs/ensureRunnerLogin/startAmaRunner/startPreparedAmaRunner/
-  applyAmaRunnerOnboarding/RunnerMode);controlPlaneEnv.ts 的 AMA_* env;paths.ts 的
-  AMA_WORKSPACE;maintainerScheduler.ts 的 scheduler_type "ama";CLI 测试更新。
-- **前端**:AMA UI(chat/OIDC/cloud machine/sessions/MaintainerDetailPage 的 AMA
-  session 元数据展示)。
-- **schema/迁移**:agents.ama_agent_id、machines.ama_environment_id、
-  board_maintainers.ama_*、ama_agent_sessions.ama_session_id/secret_ref 等列清理;
-  wrangler 配置的 AMA env 清理。
-- **boardMaintainerRepo/machineRepo/taskRepo/runtimeBindingRepo**:AMA 残留列与分支。
+### 已完成(CLI/前端/schema/repo,2026-08-30)
+- **CLI**(`56befb8` `refactor(cli): drop ama-runner mode and device login`,12 文件
+  +60/-1417):删 `packages/cli/src/amaRunner.ts`;`start.ts` 的 --mode ama 分支与
+  RunnerMode;controlPlaneEnv.ts 的 AMA_* env;paths.ts 的 AMA_WORKSPACE;
+  maintainerScheduler.ts 的 scheduler_type "ama";重写 start-command.test.ts、
+  auth-command.test.ts、processManager.test.ts。
+- **前端**(`faa19c2` `refactor(web): drop AMA cloud UI, session chat, and dead API
+  clients`,14 文件 +33/-2281):删 api.sessions/chat/Cloud Sandbox/OIDC/
+  MaintainerDetailPage 的 AMA session 元数据展示。
+- **schema/迁移**(`b266f9c`,含 `0048_drop_ama_columns.sql`):先 DROP 索引再
+  DROP COLUMN,删 agents.ama_agent_id、machines.ama_environment_id、
+  board_maintainers.ama_*(含 last_ama_session_id)。
+  **保留**:`ama_agent_sessions` 表及其 ama_session_id/secret_ref/secret_credential_id
+  (agent 会话认证核心,agentSessionRepo/auth.ts/agentRepo/statsRepo 使用)。
+- **repo 残留**(`b266f9c` + `d12689c`):boardMaintainerRepo/machineRepo 删 AMA
+  列与死函数;`d12689c` `refactor(server): drop dead runtime-binding repo and AMA
+  claim branches`(+2/-153)删 runtimeBindingRepo.ts(listPendingTaskRuntimeBindings/
+  compareAndSetTaskRuntimeSource/persistInferredAmaTaskRuntimeSource 全无调用方)、
+  runtimeRouter.selectRuntimeSource、taskRepo claimTask 的 "ama" sourceGuard 分支与
+  listTasks 的 runtime_source 类型收窄为 "legacy"。
+- **wrangler**(`b266f9c`):删 AMA_ORIGIN/AMA_OIDC_*/AMA_RUNNER_VERSION vars(生产+staging)。
+- 全量回归 2450 tests 通过;`docs/HANDOFF-stage3-cli.md` 已同步。
 
 ## 后续会话起点
 
-从阶段 3 剩余开始:先删 CLI(amaRunner.ts + start.ts --mode ama),再前端 AMA UI,
-最后 schema/迁移清理;每个子步骤独立 typecheck + 测试。
+阶段 3 全部完成。下一阶段:**阶段 4(Local Maintainer 完整替代)**,计划见
+`plans/local-maintainer-ama-parity.md`(内置租户级 Agent、maintainer_runs/sessions/
+memories/event_cursors 表、GitHub 事件 webhook+轮询、skill 本地化与每日更新、执行
+管线提取)。复用基础:CLI `LocalMaintainerScheduler`、`POST .../local-runs` 幂等端点、
+`daemon/dispatcher.ts` 执行管线。
