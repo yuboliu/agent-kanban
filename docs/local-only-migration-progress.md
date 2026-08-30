@@ -9,8 +9,8 @@
 |---|---|---|
 | 0 | 冻结基线与迁移预检 | ✅ 已交付(commit `0caf692`) |
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
-| 2 | 纯 Node 运行时 | 🔶 核心已交付(commit `aeb23a8`),scripts/vite 代理待后续 |
-| 3 | 删除 AMA 双轨运行时 | ⏳ 未开始 |
+| 2 | 纯 Node 运行时 | 🔶 核心已交付(commit `25354e1`),scripts/vite 代理待后续 |
+| 3 | 删除 AMA 双轨运行时 | 🔶 服务端+shared 已完成(见下),CLI/前端/schema 待后续 |
 | 4 | Local Maintainer 完整替代 | ⏳ 未开始 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
 | 6 | 可选 GitHub App | ⏳ 未开始 |
@@ -30,48 +30,53 @@
 - ✅ 契约测试(`sqliteDatabase.test.ts`,8 用例):语句绑定/归一化、`meta.changes`、
   batch 原子回滚、条件 task claim 原子性、外键约束。
 
-## 阶段 1 未完成(纳入阶段 2)
-
-- ❌ Worker `Env` 拆成 `AppServices`(database/config/relay/metrics/background/GitHub clients)。
-- ❌ Hono 导出改为 `createApi(services)`,移除业务代码对 Cloudflare binding、
-  `ExecutionContext`、`waitUntil()` 的直接依赖。
-  - 现状:`routes.ts` 为 `const api = new Hono<{ Bindings: Env }>()` + `export { api }`,
-    worker 入口 `api.fetch(request, env)`;scheduled handler 直接使用 `env.DB` 与 `env`。
-  - 依赖关系:这两项与阶段 2(Node server 入口、进程内 relay)强耦合,需一并系统实施。
-
 ## 提交记录
 
 - `420fc61` — 阶段 5 用户名认证改造
 - `0caf692` — 阶段 0 基线 + 阶段 1 AppDatabase 契约/better-sqlite3 适配器/契约测试
 - `4859309` — 阶段 1 完成(AppServices + createApi)
 - `25354e1` — 阶段 2 核心(Node 运行时:server 入口/relay/长 SSE/metrics/scheduler)
+- `a79262d` — 阶段 3.1 任务分配只检查本地,移除 AMA dispatch
+- `58dd78b` — 阶段 3.2 modelCatalog 本地化,删 maintainerTriggerConcurrency
+- `586727c` — 阶段 3.3 移除 AMA 任务消息
+- `9dcd4d7` — 阶段 3.4/3.5 routes 全部本地化,删除 amaRuntime/amaOwnerIntegrationRepo/taskDispatch
+- `ff8cd6c` — 阶段 3.6 shared types 移除 AMA 类型与 ama_agent_id
+- `32df9db` — types.ts 移除 AMA env 配置
 
-## 阶段 3 评估(AMA 删除)
+## 阶段 3 完成情况
 
-- **阶段 3.3 已完成(commit `586727c`)**:taskDispatch 删除 sendTaskMessageToAma/
-  sendTaskRejectToAma 及注解 helper;routes 的 reject/notes/messages 不再发送
-  AMA session 消息。E2E review-actions + task-card-chat 通过。
-- **阶段 3.2 已完成(commit `58dd78b`)**:modelCatalog 只聚合本地机器(删 AMA
-  cloud catalog/runner 模型);删除 maintainerTriggerConcurrency.ts(纯 AMA);
-  worker/node scheduler 不再 backfill trigger 并发;githubWebhook 不再调用
-  ensureMaintainerHttpTriggerSerial。pre-commit 全过。
-- **阶段 3.1 已完成(commit `a79262d`)**:任务分配只检查本地 + 移除 AMA dispatch。
-  - runtimeRouter:ama 恒 false,只查本地机器心跳。
-  - taskDispatch:删除 dispatchTaskToAma/claim/backoff/prompt/vault/session/teardown/
-    sweeps,保留 agent 同步、任务消息、通用工具。
-  - runtimeCoordinator:dispatch/release 变空操作;routePendingTasks 删除。
-  - githubWebhook/taskStale:PR 关闭/超时不 teardown 绑定。
-  - worker cron + node scheduler:只剩 stale-machine/stale-task sweep。
-  - 净删 836 行,pre-commit(biome/typecheck/2558 tests)通过。
-- **阶段 3 剩余(后续会话)**:
-  - 删除 `amaRuntime.ts`(1496 行)、`amaOwnerIntegrationRepo.ts`(166 行)及
-    依赖方:routes 的 AMA API(/api/ama/provision、/api/machines/cloud、
-    /api/sessions*、/api/tasks/:id/session*)、githubWebhook maintainer AMA、
-    maintainerTriggerConcurrency、modelCatalog、boardMaintainerRepo 的 AMA 列、
-    agentRepo 的 ama_agent_id、agentSessionRepo AMA 函数、shared types、
-    CLI(ak start --mode ama/device login)、前端 AMA UI、schema 迁移清理。
+### 已完成(服务端 + shared)
+- **3.1**(`a79262d`):runtimeRouter ama 恒 false;taskDispatch 删 dispatch/claim/backoff/
+  prompt/vault/session/teardown/sweeps;runtimeCoordinator dispatch/release 变空;
+  githubWebhook/taskStale 不再 teardown;cron 只剩 stale sweeps。净删 836 行。
+- **3.2**(`58dd78b`):modelCatalog 只聚合本地机器;删 maintainerTriggerConcurrency.ts。
+- **3.3**(`586727c`):taskDispatch 删 sendTaskMessageToAma/sendTaskRejectToAma;routes
+  reject/notes/messages 不再发 AMA session 消息。
+- **3.4/3.5**(`9dcd4d7`):routes 删 /api/ama/provision、/api/machines/cloud、/api/sessions*、
+  /api/tasks/:id/session(+/ws);agent create/update/delete 不再镜像 AMA;board maintainer
+  纯 local(无 AMA schedule/HTTP trigger/vault/memory);maintainer variables/memories/runs
+  端点删除;machine 状态纯本地;githubWebhook 删 AMA maintainer 事件;betterAuth 删
+  hasAmaResources 与 AMA OIDC provider;删除 taskDispatch.ts/amaRuntime.ts/
+  amaOwnerIntegrationRepo.ts/amaRuntime.test.ts;runtimeRouter 删 ama 辅助。净删 3675 行。
+- **3.6**(`ff8cd6c`):AgentRuntime 去 'ama';MachineHosting 仅 local;删
+  CLOUD_AGENT_RUNTIMES/isCloudAgentRuntime;Agent.ama_agent_id 删除;agentRepo 删
+  setAgentAmaId 等;agentSessionRepo 删 AMA session 函数,listSessions 不再暴露
+  ama_session_id/'ama' source。
+- **`32df9db`**:AppServices/Env 移除 AMA_* 配置;auth agentRuntimeSource 仅 legacy。
+
+### 剩余(后续会话)
+- **CLI**:删除 `packages/cli/src/amaRunner.ts`(runner 下载);`start.ts` 的 --mode ama
+  分支(amaRunnerArgs/ensureRunnerLogin/startAmaRunner/startPreparedAmaRunner/
+  applyAmaRunnerOnboarding/RunnerMode);controlPlaneEnv.ts 的 AMA_* env;paths.ts 的
+  AMA_WORKSPACE;maintainerScheduler.ts 的 scheduler_type "ama";CLI 测试更新。
+- **前端**:AMA UI(chat/OIDC/cloud machine/sessions/MaintainerDetailPage 的 AMA
+  session 元数据展示)。
+- **schema/迁移**:agents.ama_agent_id、machines.ama_environment_id、
+  board_maintainers.ama_*、ama_agent_sessions.ama_session_id/secret_ref 等列清理;
+  wrangler 配置的 AMA env 清理。
+- **boardMaintainerRepo/machineRepo/taskRepo/runtimeBindingRepo**:AMA 残留列与分支。
 
 ## 后续会话起点
 
-从阶段 3 开始:先探索 taskDispatch 的 legacy dispatch 路径(runtimeBinding/
-agent_sessions),保留并强化,再删除 AMA 分支;每个子步骤独立 typecheck + 测试。
+从阶段 3 剩余开始:先删 CLI(amaRunner.ts + start.ts --mode ama),再前端 AMA UI,
+最后 schema/迁移清理;每个子步骤独立 typecheck + 测试。
