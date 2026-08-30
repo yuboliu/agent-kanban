@@ -4,13 +4,11 @@
 
 ## 当前状态
 
-- **已提交(9 个)**:阶段 3 服务端 + shared 全部完成(见下)。
-- **未提交(9 个文件,全部为 CLI 清理)**:`git status` 显示 `packages/cli/src` 与
-  `packages/cli/tests` 的 AMA 清理。**这些改动已验证 `tsc` 通过,但 CLI 测试
-  `start-command.test.ts` 仍有 28 个失败(AMA 测试未重写),因此尚未 commit
-  (pre-commit 钩子会跑完整测试)**。
+- **阶段 3 CLI 清理已完成并提交**:commit `56befb8` `refactor(cli): drop ama-runner
+  mode and device login`(12 文件,+60/-1417,pre-commit biome/typecheck/vitest 2519 全过)。
+- 至此**阶段 3(删 AMA)全部完成**:服务端 + shared + CLI。
 
-### 未提交的改动清单
+### 提交 `56befb8` 内容
 
 | 文件 | 改动 |
 |---|---|
@@ -21,30 +19,18 @@
 | `packages/cli/src/daemon/maintainerScheduler.ts` | `scheduler_type` 类型收窄为 `"local"` |
 | `packages/cli/src/paths.ts` | 删除 `AMA_WORKSPACE` 回退 |
 | `packages/cli/tests/ama-runner.test.ts` 等 3 个 | **已删除**(AMA runner 测试) |
+| `packages/cli/tests/start-command.test.ts` | **重写**:删 AMA 测试/辅助(vi.mock amaRunner、mockMachineRunnerFetch、writeCredentialStore、credentialsFilePath/legacyLoginFilePath、registerStart/RestartCommand 的 mode 覆盖);`it.each` 并发锁只留 `["local","local"]`;local 测试删 `runtime: "local-daemon"` 断言;restart 启动日志断言改为小写 `machine runner started`(local 版日志为 `Local machine runner started`) |
+| `packages/cli/tests/auth-command.test.ts` | `AMA_WORKSPACE_HOME`/`AMA_WORKSPACE` → `AK_WORKSPACE_HOME`/`AK_WORKSPACE_DIR`(beforeEach/afterEach + 2 个 git 测试) |
+| `packages/cli/tests/processManager.test.ts` | controlPlaneKeys 删 AMA_*(与 controlPlaneEnv.ts 同步) |
 
-### CLI 测试当前状态(未完成,必须修复才能提交)
+### 坑
 
-- `packages/cli/tests/start-command.test.ts`(1736 行):**28 个失败**。需删除 AMA 相关
-  测试与辅助:
-  - 删头部 `vi.mock("../src/amaRunner.js", ...)`、`mockMachineRunnerFetch()`、
-    `writeCredentialStore()`、`credentialsFilePath`/`legacyLoginFilePath` 常量、
-    `registerStartCommand`/`registerRestartCommand` 的 `mode` 覆盖辅助。
-  - 删测试:"finishes AMA onboarding…"、"rechecks a live PID…"、"preserves AMA
-    onboarding…"、"sanitizes inherited control-plane secrets…"、"starts the Machine
-    runner, pointing it at the AMA origin…"、"does not pass onboarding runner id…"、
-    "skips device login…"、"migrates a legacy saved login…"、"re-runs device login…"(×3)、
-    "refreshes a saved runner login…"、"clears a stale refreshable runner login…"、
-    "throws when machine registration…"(×3)、"fails start when device login exits
-    non-zero"、"restarts the Machine runner with the original AK credentials flow"。
-  - `it.each([["local","local"],["ama","ama"],["ama","local"]])` 改为只 `["local","local"]`。
-  - 保留所有 local daemon 测试(IPC ready、并发锁、stale marker、SIGTERM/SIGKILL、
-    restart 本地设置保留、status/stop/logs)。
-  - 注意:local daemon 测试断言 `daemon-state.json` 含 `runtime: "local-daemon"`,
-    该字段已从 `DaemonState` 删除,需同步删断言。
-- `packages/cli/tests/auth-command.test.ts`:5 处 `AMA_WORKSPACE_HOME`/`AMA_WORKSPACE`
-  改为 `AK_WORKSPACE_HOME`/`AK_WORKSPACE_DIR`。
+- `replace_in_file` 偶发"报告成功但未生效",编辑后需 read_file 复核。
+- local daemon 成功日志是 `● Local machine runner started`(小写 machine),旧 AMA
+  断言 `Machine runner started`(大写)不匹配。
+- biome pre-commit 只检查不自动修,格式问题需先 `npx biome format --write`。
 
-## 已完成提交(阶段 3 服务端 + shared,全部过 pre-commit:biome/typecheck/vitest 2545+)
+## 已完成提交(阶段 3 服务端 + shared + CLI,全部过 pre-commit)
 
 - `a79262d` 3.1 任务分配只本地,删 AMA dispatch(净删 836 行)
 - `58dd78b` 3.2 modelCatalog 只聚合本地;删 maintainerTriggerConcurrency.ts
@@ -58,10 +44,7 @@
 
 ## 后续任务(按优先级)
 
-1. **修复 CLI 测试并提交**:
-   - 重写 `start-command.test.ts`(删 AMA 测试)、改 `auth-command.test.ts`。
-   - `pnpm --filter agent-kanban exec tsc --noEmit` + `npx vitest run packages/cli/tests/start-command.test.ts packages/cli/tests/auth-command.test.ts`。
-   - 提交未提交的 9 个文件(建议 message:`refactor(cli): drop ama-runner mode and device login`)。
+1. ~~**修复 CLI 测试并提交**~~ ✅ 已完成(commit `56befb8`,见上)。
 2. **前端 AMA UI**(`apps/web/src`):
    - 搜索 `ama`/`AMA`/`cloud machine`/`session` 相关页面/组件/API 客户端。
    - 已知:MaintainerDetailPage.tsx 的 AMA session 元数据展示(AK_ANNOTATION_KEY_* 可保留
