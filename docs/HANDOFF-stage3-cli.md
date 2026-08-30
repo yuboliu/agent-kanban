@@ -45,10 +45,18 @@
 ## 后续任务(按优先级)
 
 1. ~~**修复 CLI 测试并提交**~~ ✅ 已完成(commit `56befb8`,见上)。
-2. **前端 AMA UI**(`apps/web/src`):
-   - 搜索 `ama`/`AMA`/`cloud machine`/`session` 相关页面/组件/API 客户端。
-   - 已知:MaintainerDetailPage.tsx 的 AMA session 元数据展示(AK_ANNOTATION_KEY_* 可保留
-     或清理,取决于 session 来源);SessionsTab/OIDC 按钮/cloud machine UI。
+2. ~~**前端 AMA UI**~~ ✅ 已完成(commit `faa19c2`,`refactor(web): drop AMA cloud UI, session chat, and dead API clients`,14 文件,+33/-2281):
+   - 删 `api.sessions`(list/get/sessionWs)、`api.tasks.session/sessionWs`、`api.machines.createCloud`、`api.ama.provision`;
+   - 删 `ChatPanel` 的 `amaSessionId` 分支与 `AmaSessionChat`(AMA 浏览器 WS)、`RelayRuntimeProvider` 的
+     `AmaRuntimeProvider` + 全部 ama 规范化辅助;
+   - `TaskChatDrawer` 删 ama annotation 检测;`AccountPage` 删 AMA 连接段(OIDC);`MachinesPage` 删
+     Cloud Sandbox;`MaintainerDetailPage` 删 Sessions tab + MaintainerSessionDrawer(session 聊天无法提供,
+     Activity 面板 session 变纯文本),Scheduler metric 恒 "local ak start";`useBoardMaintainerSessions` 删
+     (后端无 `/api/sessions` 路由,死代码);`BoardMaintainerDialog` `scheduler_type` 收窄 "local";
+     `auth-client` 删 genericOAuthClient/oauth2;shared 注释清理。
+   - 保留:`AK_ANNOTATION_KEY_*`(GitHub 来源元数据)、`RelayRuntimeProvider`/`relaySessionId`(legacy daemon tunnel)、
+     admin `SessionsPanel`、`api.agents.sessions`(后端存在)。
+   - 注意:`replace_in_file` 在并发编辑时"报告成功但未生效"频繁发生,改完必须 read_file 复核 + 全仓搜索确认。
 3. **schema/迁移清理**(`apps/web/migrations`):
    - `agents.ama_agent_id`、`machines.ama_environment_id`、`board_maintainers.ama_schedule_id`/
      `ama_http_trigger_id`/`ama_memory_store_id`/`ama_board_vault_id` 等、`ama_agent_sessions.ama_session_id`/
