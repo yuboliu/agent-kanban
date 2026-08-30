@@ -16,7 +16,6 @@ interface BoardMaintainer {
   interval_seconds: number;
   heartbeat_enabled?: boolean;
   review_enabled?: boolean;
-  github_events_enabled?: boolean;
   scheduler_type?: "local";
 }
 
@@ -38,7 +37,6 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
   const [intervalSeconds, setIntervalSeconds] = useState(String(MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
   const [reviewEnabled, setReviewEnabled] = useState(true);
-  const [githubEventsEnabled, setGithubEventsEnabled] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -47,13 +45,12 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
     setIntervalSeconds(String(maintainer?.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS));
     setHeartbeatEnabled(maintainer?.heartbeat_enabled ?? true);
     setReviewEnabled(maintainer?.review_enabled ?? true);
-    setGithubEventsEnabled(maintainer?.github_events_enabled ?? false);
   }, [open, maintainer?.id]);
 
   const pending = createMaintainer.isPending || updateMaintainer.isPending;
 
   async function save() {
-    if (!heartbeatEnabled && !reviewEnabled && !githubEventsEnabled) {
+    if (!heartbeatEnabled && !reviewEnabled) {
       toast.error("Enable at least one trigger mode");
       return;
     }
@@ -70,7 +67,6 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
       interval_seconds: savedInterval,
       heartbeat_enabled: heartbeatEnabled,
       review_enabled: reviewEnabled,
-      github_events_enabled: githubEventsEnabled,
     };
     try {
       if (maintainer) {
@@ -150,14 +146,6 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
               <p className="mt-0.5 text-xs text-content-tertiary">Run a periodic health and backlog review.</p>
             </div>
             <Switch id="maintainer-heartbeat" checked={heartbeatEnabled} onCheckedChange={setHeartbeatEnabled} disabled={pending} />
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-primary px-3 py-2">
-            <div className="min-w-0">
-              <Label htmlFor="maintainer-github-events">GitHub events</Label>
-              <p className="mt-0.5 text-xs text-content-tertiary">React to issue/PR events from the linked repository (requires GitHub App).</p>
-            </div>
-            <Switch id="maintainer-github-events" checked={githubEventsEnabled} onCheckedChange={setGithubEventsEnabled} disabled={pending} />
           </div>
         </div>
 

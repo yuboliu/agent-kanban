@@ -333,12 +333,6 @@ export abstract class ApiClient {
   getRepository(repoId: string) {
     return this.request("GET", `/api/repositories/${repoId}`);
   }
-  createRepositoryGithubToken(repoId: string) {
-    return this.request<{ repository_id: string; full_name: string; token: string; expires_at: string }>(
-      "POST",
-      `/api/repositories/${repoId}/github-token`,
-    );
-  }
   deleteRepository(repoId: string) {
     return this.request("DELETE", `/api/repositories/${repoId}`);
   }

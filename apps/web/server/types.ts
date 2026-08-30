@@ -60,16 +60,8 @@ export interface AppServices {
   ASSETS: AssetsService;
   AUTH_SECRET: string;
   ALLOWED_HOSTS: string;
-  GITHUB_CLIENT_ID: string;
-  GITHUB_CLIENT_SECRET: string;
   MAILS_ADMIN_TOKEN: string;
   AK_API_URL?: string;
-  GITHUB_APP_WEBHOOK_SECRET?: string;
-  GITHUB_APP_ID?: string;
-  // base64 of the App's PKCS#8 PEM private key
-  GITHUB_APP_PRIVATE_KEY?: string;
-  // public App slug, used to build the install URL github.com/apps/<slug>/installations/new
-  GITHUB_APP_SLUG?: string;
   MIN_CLI_VERSION?: string;
 }
 

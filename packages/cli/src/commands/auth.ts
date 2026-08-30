@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import type { Command } from "commander";
 import { loadIdentity } from "../agent/identity.js";
 import { createClient, loginLeaderAgent } from "../agent/leader.js";
@@ -9,7 +8,6 @@ import { clearWorkerAuthSession, readWorkerAuthSession, writeWorkerAuthSession }
 import { AgentClient } from "../client/agent.js";
 import { getCredentials, saveCredentials } from "../config.js";
 import { isPidAlive, listSessions } from "../session/store.js";
-import { configureGithubAuth } from "./github.js";
 
 async function maintainerLogin(): Promise<{ agentId: string; sessionId: string; reused: boolean }> {
   const apiUrl = process.env.AK_API_URL;
@@ -77,18 +75,6 @@ function hasMaintainerLoginEnv(): boolean {
   return Boolean(
     process.env.AK_API_URL && process.env.AK_API_KEY && process.env.AK_AGENT_ID && process.env.AK_BOARD_ID && process.env.AK_MAINTAINER_ID,
   );
-}
-
-function repositoryProvider(repo: any): "github" {
-  const url = String(repo?.url ?? "");
-  if (url.includes("github.com:") || url.includes("github.com/")) return "github";
-  throw new Error(`Unsupported git provider for repository URL: ${url}`);
-}
-
-function workerGithubAuthHome(): string {
-  if (process.env.AK_WORKSPACE_HOME) return process.env.AK_WORKSPACE_HOME;
-  if (process.env.AK_WORKSPACE_DIR) return join(process.env.AK_WORKSPACE_DIR, ".home");
-  throw new Error("Refusing to modify GitHub credentials without an isolated worker HOME.");
 }
 
 export function registerAuthCommand(program: Command) {
@@ -196,25 +182,13 @@ export function registerAuthCommand(program: Command) {
 
   authCmd
     .command("git <repo-id>")
-    .description("Configure git authentication for an AK repository")
-    .option("--print-token", "Print the minted provider token instead of configuring local tools")
-    .action(async (repoId: string, opts) => {
+    .description("Show how to authenticate git for an AK repository (uses your local gh login)")
+    .action(async (repoId: string) => {
       const client = await ensureAuthSession();
-      const repo = await client.getRepository(repoId);
-      const provider = repositoryProvider(repo);
-      if (provider === "github") {
-        const auth = await client.createRepositoryGithubToken(repoId);
-        if (opts.printToken) {
-          console.log(auth.token);
-          return;
-        }
-        if (process.env.AK_WORKER !== "1") {
-          throw new Error("Refusing to modify global git credentials outside an AK worker. Use --print-token.");
-        }
-        const ghStatus = await configureGithubAuth(auth.token, { homeDir: workerGithubAuthHome() });
-        const ghMessage = ghStatus === "configured" ? "gh credentials configured" : "gh not found; git credentials configured";
-        console.log(`Configured GitHub auth for ${auth.full_name}; ${ghMessage}; expires at ${auth.expires_at}`);
-        console.log(`Token validity: about 1 hour. If it expires, re-run \`ak auth git ${repoId}\` to mint a fresh token.`);
-      }
+      const repo = (await client.getRepository(repoId)) as { full_name?: string; url?: string } | undefined;
+      console.log(
+        `Platform GitHub token minting was removed. Authenticate the local gh CLI (gh auth login) ` +
+          `and workers will use your local git credentials. Repository: ${repo?.full_name ?? repo?.url ?? repoId}`,
+      );
     });
 }

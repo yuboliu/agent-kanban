@@ -2,8 +2,6 @@ import type {
   AgentRuntime,
   BuiltinSkill,
   CreateSubagentInput,
-  GithubAppConfig,
-  InstallableRepo,
   RelayEndpointConfig,
   RelayEndpointInput,
   RelayUsageResponse,
@@ -181,10 +179,6 @@ export const api = {
     create: (input: { name: string; description?: string; body?: string }) => request<Skill>("POST", "/skills", input),
     update: (id: string, body: { name?: string; description?: string; body?: string }) => request<Skill>("PATCH", `/skills/${id}`, body),
     delete: (id: string) => request<void>("DELETE", `/skills/${id}`),
-  },
-  githubApp: {
-    config: () => request<GithubAppConfig>("GET", "/github-app/config"),
-    installableRepos: () => request<{ installed: boolean; repositories: InstallableRepo[] }>("GET", "/github-app/repositories"),
   },
   settings: {
     getScheduling: () => request<SchedulingSettings>("GET", "/settings/scheduling"),

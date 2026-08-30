@@ -61,7 +61,6 @@ describe("MaintainerDetailPage", () => {
         last_error_message: null,
         heartbeat_enabled: true,
         review_enabled: true,
-        github_events_enabled: false,
         scheduler_type: "local",
       },
     });
@@ -168,7 +167,6 @@ describe("MaintainerDetailPage", () => {
     renderMaintainerDetail();
 
     expect(screen.getByText("claude")).toBeInTheDocument();
-    expect(screen.getByText("GitHub events")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Edit triggers" }));
 
     expect(screen.getByRole("dialog")).toHaveTextContent("Trigger settings");

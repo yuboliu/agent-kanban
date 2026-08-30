@@ -10,14 +10,12 @@ import {
   detectRelay,
   findInvalidSkillRef,
   hasNoScheduleTaint,
-  type InstallableRepo,
   isBoardType,
   isValidAgentRole,
   isValidUsername,
   LEADER_AGENT_RUNTIMES,
   MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS,
   MAINTAINER_HEARTBEAT_MIN_INTERVAL_SECONDS,
-  MAINTAINER_TAINT_KEY,
   type MachineRuntime,
   normalizeRelayEndpointInput,
   normalizeRuntimeSettings,
@@ -62,7 +60,6 @@ import {
   getBoardMaintainer,
   getOwnedBoard,
   isActiveMaintainerForBoard,
-  isActiveMaintainerForRepository,
   listBoardMaintainers,
   listBoardMaintainersForAgentLineage,
   markLocalBoardMaintainerRun,
@@ -86,17 +83,7 @@ import { createBoardSSEResponse, createPublicBoardSSEResponse } from "./boardSSE
 import { readBuiltinSkills } from "./builtinSkills";
 import { cliVersionMiddleware } from "./cliVersion";
 import { type D1, newLongId } from "./db";
-import { isGithubAppConfigured, listInstallationRepositories, mintGithubInstallationToken, recordInstallationFromSetup } from "./githubApp";
-import { getInstallationsForOwner, repoAppStatus, repoAppStatusBatch } from "./githubInstallations";
-import { addAgentEmail, getGithubToken, removeAgentEmail, syncGpgKey } from "./githubService";
-import {
-  handleGithubInstallationEvent,
-  handleGithubInstallationRepositoriesEvent,
-  handleGithubMaintainerEvent,
-  handleGithubPullRequestEvent,
-  verifyGithubSignature,
-} from "./githubWebhook";
-import { getArmoredPrivateKey, getRootKeyInfo, getRootPublicKey, getSubkeyIds } from "./gpgKeyRepo";
+import { getArmoredPrivateKey, getRootPublicKey } from "./gpgKeyRepo";
 import { legacyMachineHeartbeatFresh } from "./legacyRuntime";
 import { createLogger } from "./logger";
 import {
@@ -138,7 +125,7 @@ import {
   toPublicConfig,
   updateRelayEndpoint,
 } from "./relayEndpointRepo";
-import { createRepository, deleteRepository, getRepository, listRepositories, normalizeGitUrl } from "./repositoryRepo";
+import { createRepository, deleteRepository, getRepository, listRepositories } from "./repositoryRepo";
 import { metadataWithRuntimeSource, taskRuntimeSource } from "./runtimeBinding";
 import { dispatchAssignedTask, releaseAssignedTaskRuntime, resolveAssignableWorkerRuntimeSource } from "./runtimeCoordinator";
 import { listAvailableRuntimeSources } from "./runtimeRouter";
@@ -178,8 +165,7 @@ const logger = createLogger("api");
 
 // Permanently disabled public authentication endpoints. Account creation is
 // exclusively first-run bootstrap; email verification and email/social
-// sign-in are gone. GitHub OAuth remains available as a post-login binding
-// via /link-social + /callback/github.
+// sign-in are gone.
 const BLOCKED_AUTH_PATHS = new Set<string>([
   "/api/auth/sign-up/email",
   "/api/auth/sign-in/email",
@@ -560,7 +546,7 @@ async function requireTaskManager(c: { env: AppServices; get: (key: string) => a
   return identity;
 }
 
-async function isCurrentTaskWorkerForRepository(
+async function _isCurrentTaskWorkerForRepository(
   db: D1,
   ownerId: string,
   agentId: string,
@@ -625,7 +611,7 @@ api.on(["GET", "POST", "PUT"], "/api/auth/*", async (c) => {
     // Public registration / email flows are permanently disabled. Account
     // creation is only available through POST /api/auth/bootstrap/register
     // (first-run, zero-user state) and legacy email compat login goes through
-    // POST /api/auth/sign-in/legacy-email; GitHub is bind-only after sign-in.
+    // POST /api/auth/sign-in/legacy-email.
     if (BLOCKED_AUTH_PATHS.has(c.req.path)) {
       return c.json({ error: { code: "DISABLED", message: "This authentication method is no longer available" } }, { status: 403 });
     }
@@ -642,48 +628,6 @@ api.on(["GET", "POST", "PUT"], "/api/auth/*", async (c) => {
 });
 
 api.get("/api/ping", (c) => c.json({ pong: true }));
-
-// ─── GitHub App webhook receiver (no session auth — HMAC-verified) ───
-// Registered BEFORE the `api.use("/api/*", authMiddleware)` block below:
-// Hono applies middleware only to routes registered after the use() call, so
-// moving this route (or the middleware) changes its auth exposure.
-// One platform GitHub App delivers all installations' pull_request events
-// here, signed with the app webhook secret (GITHUB_APP_WEBHOOK_SECRET).
-// Users only install the app on their repositories — no per-user setup.
-
-api.post("/api/webhooks/github-app", async (c) => {
-  const secret = c.env.GITHUB_APP_WEBHOOK_SECRET;
-  if (!secret) {
-    // Stable disabled state (stage 6): return 2xx so GitHub does not treat the
-    // unconfigured receiver as a delivery failure and retry/back off. No
-    // network calls are made when the App is not configured.
-    return c.json({ ok: true, handled: false, disabled: true, reason: "GitHub App webhook is not configured" });
-  }
-  const signature = c.req.header("x-hub-signature-256");
-  const body = await c.req.text();
-  if (!signature || !(await verifyGithubSignature(secret, body, signature))) {
-    throw new HTTPException(401, { message: "Invalid webhook signature" });
-  }
-  const event = c.req.header("x-github-event");
-  const _deliveryId = c.req.header("x-github-delivery");
-  const payload = JSON.parse(body);
-  if (event === "pull_request") {
-    const taskSync = await handleGithubPullRequestEvent(c.env.DB, c.env, payload);
-    const maintainerSync = await handleGithubMaintainerEvent(c.env.DB, event, payload);
-    return c.json({ ok: true, ...taskSync, maintainer: maintainerSync });
-  }
-  if (event === "installation") {
-    return c.json({ ok: true, ...(await handleGithubInstallationEvent(c.env.DB, payload)) });
-  }
-  if (event === "installation_repositories") {
-    return c.json({ ok: true, ...(await handleGithubInstallationRepositoriesEvent(c.env.DB, payload)) });
-  }
-  if (event === "issues" || event === "issue_comment" || event === "pull_request_review" || event === "pull_request_review_comment") {
-    const maintainerSync = await handleGithubMaintainerEvent(c.env.DB, event, payload);
-    return c.json({ ok: true, handled: true, maintainer: maintainerSync });
-  }
-  return c.json({ ok: true, handled: false });
-});
 
 // ─── Public Share Routes (no auth required) ───
 
@@ -1301,13 +1245,6 @@ api.post("/api/agents", async (c) => {
       gpgSubkeyId: latestIdentity ? undefined : identity.id.toUpperCase(),
     });
 
-    // GitHub sync — best-effort, skip if not connected
-    try {
-      await syncToGithub(c.env, ownerId, email);
-    } catch (err: unknown) {
-      logger.warn(`github sync failed for agent ${agent.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
     return c.json(agent, 201);
   } catch (err) {
     if (!existingUsername) {
@@ -1373,14 +1310,6 @@ api.delete("/api/agents/:id", async (c) => {
   const remaining = await c.env.DB.prepare("SELECT 1 FROM agents WHERE username = ? LIMIT 1").bind(agent.username).first();
   if (c.env.MAILS_ADMIN_TOKEN && !remaining) {
     await deleteMailbox(c.env.MAILS_ADMIN_TOKEN, email);
-  }
-
-  // Remove email from GitHub (best-effort)
-  const token = await getGithubToken(c.env.DB, c.get("ownerId"));
-  if (token && !remaining) {
-    await removeAgentEmail(token, email).catch((err: unknown) => {
-      logger.warn(`github email cleanup failed for ${email}: ${err instanceof Error ? err.message : String(err)}`);
-    });
   }
 
   return c.json({ ok: true });
@@ -1912,7 +1841,6 @@ api.post("/api/boards/:id/maintainers", async (c) => {
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
-    github_events_enabled?: boolean;
     status?: "active" | "paused";
   }>();
   const intervalSeconds = body.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
@@ -1928,9 +1856,6 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   validateMaintainerTriggerModes(heartbeatEnabled, reviewEnabled);
   if (body.runtime !== undefined && !AGENT_RUNTIMES.includes(body.runtime as AgentRuntime)) {
     throw new HTTPException(400, { message: `runtime must be one of: ${AGENT_RUNTIMES.join(", ")}` });
-  }
-  if (body.github_events_enabled !== undefined && typeof body.github_events_enabled !== "boolean") {
-    throw new HTTPException(400, { message: "github_events_enabled must be a boolean" });
   }
 
   const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
@@ -1958,7 +1883,6 @@ api.post("/api/boards/:id/maintainers", async (c) => {
       intervalSeconds,
       heartbeatEnabled,
       reviewEnabled,
-      githubEventsEnabled: body.github_events_enabled ?? false,
       runtime: (body.runtime as AgentRuntime) ?? maintainerAgent.runtime,
       model: body.model ?? maintainerAgent.model,
       status: maintainerStatus,
@@ -2131,7 +2055,6 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
-    github_events_enabled?: boolean;
     status?: "active" | "paused";
   }>();
   if (body.interval_seconds !== undefined) validateMaintainerHeartbeatInterval(body.interval_seconds);
@@ -2143,9 +2066,6 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   if (body.runtime !== undefined && !AGENT_RUNTIMES.includes(body.runtime as AgentRuntime)) {
     throw new HTTPException(400, { message: `runtime must be one of: ${AGENT_RUNTIMES.join(", ")}` });
   }
-  if (body.github_events_enabled !== undefined && typeof body.github_events_enabled !== "boolean") {
-    throw new HTTPException(400, { message: "github_events_enabled must be a boolean" });
-  }
   const nextHeartbeatEnabled = body.heartbeat_enabled ?? maintainer.heartbeat_enabled;
   const nextReviewEnabled = body.review_enabled ?? maintainer.review_enabled;
   validateMaintainerTriggerModes(nextHeartbeatEnabled, nextReviewEnabled);
@@ -2156,7 +2076,6 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
     intervalSeconds: body.interval_seconds,
     heartbeatEnabled: body.heartbeat_enabled,
     reviewEnabled: body.review_enabled,
-    githubEventsEnabled: body.github_events_enabled,
     status: body.status,
   });
   if (!updated) throw new HTTPException(404, { message: "Board maintainer not found" });
@@ -2390,73 +2309,14 @@ api.get("/api/admin/machines", async (c) => {
 
 // ─── Repositories ───
 
-// App config + this owner's install status, so the UI can show the slug-based
-// install link and reflect whether the owner has already connected the App.
-api.get("/api/github-app/config", async (c) => {
-  const slug = c.env.GITHUB_APP_SLUG ?? null;
-  const active = (await getInstallationsForOwner(c.env.DB, c.get("ownerId"))).filter((i) => i.suspendedAt === null);
-  return c.json({
-    configured: isGithubAppConfigured(c.env),
-    slug,
-    install_url: slug ? `https://github.com/apps/${slug}/installations/new` : null,
-    installed: active.length > 0,
-    accounts: active.map((i) => i.accountLogin),
-  });
-});
-
-// GitHub App "Setup URL" callback. After the user installs/configures the App,
-// GitHub redirects here with installation_id; the logged-in user is the
-// authoritative owner of that installation.
-api.get("/api/github-app/setup", async (c) => {
-  if (!isGithubAppConfigured(c.env)) throw new HTTPException(503, { message: "GitHub App is not configured" });
-  const installationId = Number(c.req.query("installation_id"));
-  if (!Number.isInteger(installationId) || installationId <= 0) {
-    throw new HTTPException(400, { message: "installation_id is required" });
-  }
-  await recordInstallationFromSetup(c.env.DB, c.env, c.get("ownerId"), installationId);
-  return c.redirect("/repositories?app_installed=1");
-});
-
-// Browse the repos the owner's installation(s) can access, for import. Live
-// list from GitHub (authoritative); the per-repo badge on the list uses the
-// stored tables instead and never calls GitHub.
-api.get("/api/github-app/repositories", async (c) => {
-  const ownerId = c.get("ownerId");
-  if (!isGithubAppConfigured(c.env)) return c.json({ configured: false, installed: false, repositories: [] });
-  const installs = (await getInstallationsForOwner(c.env.DB, ownerId)).filter((i) => i.suspendedAt === null);
-  if (installs.length === 0) return c.json({ configured: true, installed: false, repositories: [] });
-
-  const existingUrls = new Set((await listRepositories(c.env.DB, ownerId)).map((r) => r.url));
-  const lists = await Promise.all(installs.map((install) => listInstallationRepositories(c.env, install.installationId)));
-  const seen = new Set<string>();
-  const repositories: InstallableRepo[] = [];
-  for (const repo of lists.flat()) {
-    const key = repo.full_name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    repositories.push({
-      full_name: repo.full_name,
-      name: repo.name,
-      clone_url: repo.clone_url,
-      private: repo.private,
-      already_added: existingUrls.has(normalizeGitUrl(repo.clone_url)),
-    });
-  }
-  repositories.sort((a, b) => a.full_name.localeCompare(b.full_name));
-  return c.json({ installed: true, repositories });
-});
-
 api.post("/api/repositories", async (c) => {
   const body = await c.req.json<{ name: string; url: string }>();
   if (!body.name || !body.url) {
     throw new HTTPException(400, { message: "name and url are required" });
   }
   const ownerId = c.get("ownerId");
-  // Soft on App coverage: any URL can be registered; the response carries the
-  // App status so the UI can prompt installation. The PAT fallback still pushes.
   const repository = await createRepository(c.env.DB, ownerId, body);
-  const app_status = await repoAppStatus(c.env.DB, ownerId, repository.full_name);
-  return c.json({ ...repository, app_status }, 201);
+  return c.json(repository, 201);
 });
 
 api.get("/api/repositories", async (c) => {
@@ -2467,54 +2327,16 @@ api.get("/api/repositories", async (c) => {
     if (!board) throw new HTTPException(404, { message: "Board not found" });
   }
   const repositories = board_id ? await listBoardRepositories(c.env.DB, ownerId, board_id) : await listRepositories(c.env.DB, ownerId, { url });
-  const statuses = await repoAppStatusBatch(
-    c.env.DB,
-    ownerId,
-    repositories.map((r) => r.full_name),
-  );
-  return c.json(repositories.map((r) => ({ ...r, app_status: statuses.get(r.full_name) })));
+  return c.json(repositories);
 });
 
 api.get("/api/repositories/:id", async (c) => {
   const ownerId = c.get("ownerId");
   const repo = await getRepository(c.env.DB, c.req.param("id"), ownerId);
   if (!repo) throw new HTTPException(404, { message: "Repository not found" });
-  const app_status = await repoAppStatus(c.env.DB, ownerId, repo.full_name);
-  return c.json({ ...repo, app_status });
+  return c.json(repo);
 });
 
-api.post("/api/repositories/:id/github-token", async (c) => {
-  if (!isGithubAppConfigured(c.env)) throw new HTTPException(503, { message: "GitHub App is not configured" });
-  const ownerId = c.get("ownerId");
-  const repo = await getRepository(c.env.DB, c.req.param("id"), ownerId);
-  if (!repo) throw new HTTPException(404, { message: "Repository not found" });
-  if (c.get("identityType") === "agent:worker") {
-    const agentId = c.get("agentId");
-    const sessionId = c.get("sessionId") || null;
-    const allowed = agentId
-      ? (await isActiveMaintainerForRepository(c.env.DB, ownerId, agentId, repo.id)) ||
-        (await isCurrentTaskWorkerForRepository(c.env.DB, ownerId, agentId, sessionId, repo.id))
-      : false;
-    if (!allowed) {
-      throw new HTTPException(403, { message: "Worker agent is not an active maintainer or current task worker for this repository" });
-    }
-  }
-  const githubUrl = new URL(repo.url);
-  const githubParts = githubUrl.pathname.replace(/^\/|\/$/g, "").split("/");
-  if (githubUrl.hostname !== "github.com" || githubParts.length !== 2) {
-    throw new HTTPException(400, { message: "GitHub auth is only available for github.com repositories" });
-  }
-  const [githubOwner, githubRepo] = githubParts;
-  if ((await repoAppStatus(c.env.DB, ownerId, `${githubOwner}/${githubRepo}`)) !== "covered") {
-    throw new HTTPException(403, { message: "GitHub App is not installed for this owner and repository" });
-  }
-  const github = await mintGithubInstallationToken(c.env, githubOwner, githubRepo);
-  return c.json({ repository_id: repo.id, full_name: repo.full_name, token: github.token, expires_at: github.expiresAt });
-});
-
-// Unlink only: removes the AK repo row. Never uninstalls the App or removes the
-// repo from the GitHub installation — that is the user's choice on GitHub, and
-// the installation may cover repos used elsewhere.
 api.delete("/api/repositories/:id", async (c) => {
   const ownerId = c.get("ownerId");
   const repo = await c.env.DB.prepare("SELECT owner_id FROM repositories WHERE id = ?").bind(c.req.param("id")).first<{ owner_id: string }>();
@@ -2724,16 +2546,4 @@ async function wkdHash(localPart: string): Promise<string> {
   }
   if (bits > 0) out += ZBASE32[(value << (5 - bits)) & 31];
   return out;
-}
-
-async function syncToGithub(env: AppServices, ownerId: string, email: string): Promise<void> {
-  const token = await getGithubToken(env.DB, ownerId);
-  if (!token) return;
-
-  const rootKey = await getRootKeyInfo(env.DB, ownerId);
-  if (!rootKey) return;
-
-  const subkeyIds = await getSubkeyIds(rootKey.armoredPublicKey);
-  await syncGpgKey(token, rootKey.armoredPublicKey, rootKey.fingerprint, subkeyIds);
-  await addAgentEmail(token, email);
 }

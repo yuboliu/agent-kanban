@@ -37,7 +37,10 @@ vi.mock("../src/paths.js", async () => {
 
 const { writeSession, readSession, listSessions, clearAllSessions } = await import("../src/session/store.js");
 
-function makeLeaderSession(pid: number, overrides: Partial<import("../src/session/store.js").SessionFile> = {}): import("../src/session/store.js").SessionFile {
+function makeLeaderSession(
+  pid: number,
+  overrides: Partial<import("../src/session/store.js").SessionFile> = {},
+): import("../src/session/store.js").SessionFile {
   return {
     type: "leader",
     agentId: `agent-${randomUUID()}`,

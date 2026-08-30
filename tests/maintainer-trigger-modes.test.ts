@@ -208,16 +208,6 @@ describe("boardMaintainerRepo trigger modes", () => {
     expect(db.statements[0].args).toEqual([runAt, runAt, "owner-1", "board-1", "maintainer-1"]);
   });
 
-  it("filters GitHub review dispatch to review-enabled maintainers", async () => {
-    const db = fakeDb(row({ review_enabled: 1 }));
-
-    await listActiveBoardMaintainersForRepository(db as any, 42, "Acme/Repo");
-
-    expect(db.statements[0].sql).toContain("bm.review_enabled = 1");
-    expect(db.statements[0].sql).not.toContain("ama_http_trigger_id");
-    expect(db.statements[0].args).toEqual([42, "acme/repo", "acme/repo"]);
-  });
-
   it("deletes the maintainer and releases its creation claim in one batch", async () => {
     const db = fakeDb();
 

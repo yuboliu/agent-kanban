@@ -25,7 +25,10 @@ describe("groupByDependencyLayer", () => {
   it("keeps parallelizable tasks in the same layer", () => {
     const tasks = [task("b", ["a"]), task("a"), task("c", ["a"]), task("d")];
     const groups = groupByDependencyLayer(tasks);
-    expect(groups.map((g) => g.map((t) => t.id).sort())).toEqual([["a", "d"], ["b", "c"]]);
+    expect(groups.map((g) => g.map((t) => t.id).sort())).toEqual([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
   });
 
   it("ignores dependencies that live outside the column", () => {
@@ -38,7 +41,12 @@ describe("groupByDependencyLayer", () => {
   it("does not hang on dependency cycles", () => {
     const tasks = [task("a", ["b"]), task("b", ["a"])];
     const groups = groupByDependencyLayer(tasks);
-    expect(groups.flat().map((t) => t.id).sort()).toEqual(["a", "b"]);
+    expect(
+      groups
+        .flat()
+        .map((t) => t.id)
+        .sort(),
+    ).toEqual(["a", "b"]);
   });
 });
 

@@ -11,7 +11,6 @@ export interface BoardMaintainer {
   model: string | null;
   heartbeat_enabled: boolean;
   review_enabled: boolean;
-  github_events_enabled: boolean;
   status: "active" | "paused" | "archived";
   last_run_at: string | null;
   last_error_message: string | null;
@@ -30,7 +29,6 @@ export interface CreateBoardMaintainerInput {
   model?: string | null;
   heartbeatEnabled: boolean;
   reviewEnabled: boolean;
-  githubEventsEnabled?: boolean;
   status: "active" | "paused";
   apiKeyId?: string | null;
 }
@@ -42,14 +40,12 @@ export interface UpdateBoardMaintainerInput {
   model?: string | null;
   heartbeatEnabled?: boolean;
   reviewEnabled?: boolean;
-  githubEventsEnabled?: boolean;
   status?: "active" | "paused" | "archived";
 }
 
-type BoardMaintainerRow = Omit<BoardMaintainer, "heartbeat_enabled" | "review_enabled" | "github_events_enabled"> & {
+type BoardMaintainerRow = Omit<BoardMaintainer, "heartbeat_enabled" | "review_enabled"> & {
   heartbeat_enabled: number;
   review_enabled: number;
-  github_events_enabled: number;
 };
 
 function mapBoardMaintainer(row: BoardMaintainerRow): BoardMaintainer {
@@ -57,7 +53,6 @@ function mapBoardMaintainer(row: BoardMaintainerRow): BoardMaintainer {
     ...row,
     heartbeat_enabled: row.heartbeat_enabled === 1,
     review_enabled: row.review_enabled === 1,
-    github_events_enabled: row.github_events_enabled === 1,
   };
 }
 
@@ -72,9 +67,9 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
     .prepare(
       `INSERT INTO board_maintainers (
         id, owner_id, board_id, agent_id,
-        prompt, interval_seconds, runtime, model, heartbeat_enabled, review_enabled, github_events_enabled, status, api_key_id, created_at, updated_at
+        prompt, interval_seconds, runtime, model, heartbeat_enabled, review_enabled, status, api_key_id, created_at, updated_at
       )
-      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE EXISTS (
         SELECT 1 FROM board_maintainer_claims
         WHERE owner_id = ? AND board_id = ? AND maintainer_id = ?
@@ -91,7 +86,6 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
       input.model ?? null,
       input.heartbeatEnabled ? 1 : 0,
       input.reviewEnabled ? 1 : 0,
-      input.githubEventsEnabled ? 1 : 0,
       input.status,
       input.apiKeyId ?? null,
       now,
@@ -203,10 +197,6 @@ export async function updateBoardMaintainer(
     sets.push("review_enabled = ?");
     values.push(updates.reviewEnabled ? 1 : 0);
   }
-  if (updates.githubEventsEnabled !== undefined) {
-    sets.push("github_events_enabled = ?");
-    values.push(updates.githubEventsEnabled ? 1 : 0);
-  }
   if (updates.status !== undefined) {
     sets.push("status = ?");
     values.push(updates.status);
@@ -295,42 +285,4 @@ export async function isActiveMaintainerForBoard(db: D1, ownerId: string, agentI
     .bind(ownerId, agentId, boardId)
     .first();
   return Boolean(row);
-}
-
-export async function listActiveBoardMaintainersForRepository(db: D1, installationId: number, fullName: string): Promise<BoardMaintainer[]> {
-  return listMaintainersForRepositoryTrigger(db, installationId, fullName, "review");
-}
-
-export async function listGithubEventMaintainersForRepository(db: D1, installationId: number, fullName: string): Promise<BoardMaintainer[]> {
-  return listMaintainersForRepositoryTrigger(db, installationId, fullName, "github");
-}
-
-async function listMaintainersForRepositoryTrigger(
-  db: D1,
-  installationId: number,
-  fullName: string,
-  trigger: "review" | "github",
-): Promise<BoardMaintainer[]> {
-  const canonicalFullName = fullName.toLowerCase();
-  const triggerGuard = trigger === "review" ? "bm.review_enabled = 1" : "bm.github_events_enabled = 1";
-  const result = await db
-    .prepare(
-      `
-      SELECT DISTINCT bm.*
-      FROM board_maintainers bm
-      JOIN board_repositories br ON br.board_id = bm.board_id
-      JOIN repositories r ON r.id = br.repository_id AND r.owner_id = bm.owner_id
-      JOIN github_installations gi ON gi.owner_id = bm.owner_id AND gi.installation_id = ? AND gi.suspended_at IS NULL
-      LEFT JOIN github_installation_repositories gir
-        ON gir.installation_id = gi.installation_id AND gir.full_name = ?
-      WHERE bm.status = 'active'
-        AND ${triggerGuard}
-        AND replace(replace(lower(r.url), 'https://github.com/', ''), 'http://github.com/', '') = ?
-        AND (gi.repository_selection = 'all' OR gir.full_name IS NOT NULL)
-      ORDER BY bm.created_at DESC
-    `,
-    )
-    .bind(installationId, canonicalFullName, canonicalFullName)
-    .all<BoardMaintainerRow>();
-  return result.results.map(mapBoardMaintainer);
 }

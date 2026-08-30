@@ -120,8 +120,6 @@ async function setupServices(): Promise<AppServices> {
     ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
     AUTH_SECRET: "relay-test-secret-relay-test-secret",
     ALLOWED_HOSTS: "localhost",
-    GITHUB_CLIENT_ID: "x",
-    GITHUB_CLIENT_SECRET: "x",
     MAILS_ADMIN_TOKEN: "x",
   } satisfies AppServices;
 }

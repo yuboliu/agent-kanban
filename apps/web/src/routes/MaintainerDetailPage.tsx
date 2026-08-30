@@ -117,7 +117,6 @@ export function MaintainerDetailPage() {
           <Metric label="Runtime" value={maintainer.runtime ?? "unset"} />
           <Metric label="Heartbeat" value={maintainer.heartbeat_enabled === false ? "off" : "on"} />
           <Metric label="Review events" value={maintainer.review_enabled === false ? "off" : "on"} />
-          <Metric label="GitHub events" value={maintainer.github_events_enabled === true ? "on" : "off"} />
           <Metric label="Interval" value={formatInterval(maintainer.interval_seconds)} />
           <Metric label="Last run" value={maintainer.last_run_at ? formatRelative(maintainer.last_run_at) : "never"} />
         </div>

@@ -26,9 +26,7 @@ function hasCmd(cmd: string): boolean {
   return spawnSync("bash", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
 }
 
-const canRun =
-  process.platform === "linux" &&
-  ["bash", "flock", "setsid", "ps", "kill", "sleep", "awk", "grep", "ss"].every(hasCmd);
+const canRun = process.platform === "linux" && ["bash", "flock", "setsid", "ps", "kill", "sleep", "awk", "grep", "ss"].every(hasCmd);
 
 interface Instance {
   dir: string;
@@ -81,14 +79,10 @@ function startFakeService(inst: Instance): number {
   // The lock/pidfile paths are passed as positional args (not env vars) so
   // they appear literally in the holder's /proc cmdline — that lets the
   // failure-path cleanup find the real holder with pkill -f on the lock path.
-  const child = spawn(
-    "setsid",
-    ["bash", "-c", 'exec 9>"$0"; flock -n 9; echo $$ > "$1"; sleep 300 9>&9; wait', inst.lock, inst.pidFile],
-    {
-      stdio: "ignore",
-      detached: true,
-    },
-  );
+  const child = spawn("setsid", ["bash", "-c", 'exec 9>"$0"; flock -n 9; echo $$ > "$1"; sleep 300 9>&9; wait', inst.lock, inst.pidFile], {
+    stdio: "ignore",
+    detached: true,
+  });
   child.unref();
 
   const deadline = Date.now() + 5_000;

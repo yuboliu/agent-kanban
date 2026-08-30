@@ -398,11 +398,6 @@ export interface AgentSessionWithMachine extends AgentSession {
 
 // ─── Repository ───
 
-// Whether the platform GitHub App can push/PR to a repo, computed on read from
-// the installation tables. `app_not_installed` = no installation on the repo's
-// account; `not_covered` = installed but the repo isn't in a 'selected' install.
-export type RepoAppStatus = "covered" | "not_covered" | "suspended" | "app_not_installed";
-
 export interface Repository {
   id: string;
   owner_id: string;
@@ -411,28 +406,8 @@ export interface Repository {
   created_at: string;
   task_count?: number;
   full_name: string;
-  app_status?: RepoAppStatus;
   /** `remote` = cloneable URL; `local` = absolute path on the daemon host (fork extension). */
   source_type?: "remote" | "local";
-}
-
-export interface GithubAppConfig {
-  configured: boolean;
-  slug: string | null;
-  install_url: string | null;
-  // Whether the current owner has at least one active (non-suspended) installation.
-  installed: boolean;
-  // GitHub account logins the App is installed on for this owner (e.g. ["saltbo"]).
-  accounts: string[];
-}
-
-// A repo the owner's GitHub App installation can access, offered for import.
-export interface InstallableRepo {
-  full_name: string;
-  name: string;
-  clone_url: string;
-  private: boolean;
-  already_added: boolean;
 }
 
 // ─── Skills ───

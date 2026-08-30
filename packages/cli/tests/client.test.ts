@@ -1172,15 +1172,6 @@ describe("ApiClient method stubs", () => {
     expect(url).toContain("/api/repositories/repo-1");
   });
 
-  it("createRepositoryGithubToken posts to /api/repositories/:id/github-token", async () => {
-    const c = await makeAgentClient();
-    stubOk({ token: "ghs_test" });
-    await c.createRepositoryGithubToken("repo-1");
-    const [url, opts] = lastCall();
-    expect(url).toContain("/api/repositories/repo-1/github-token");
-    expect(opts.method).toBe("POST");
-  });
-
   it("deleteRepository sends DELETE /api/repositories/:id", async () => {
     const c = await makeAgentClient();
     stubOk({});

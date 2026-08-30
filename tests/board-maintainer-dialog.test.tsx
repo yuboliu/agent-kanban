@@ -73,7 +73,6 @@ describe("BoardMaintainerDialog", () => {
           interval_seconds: 3600,
           heartbeat_enabled: false,
           review_enabled: true,
-          github_events_enabled: false,
         },
       });
     });
@@ -93,7 +92,6 @@ describe("BoardMaintainerDialog", () => {
           interval_seconds: MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS,
           heartbeat_enabled: false,
           review_enabled: true,
-          github_events_enabled: false,
         },
       });
     });

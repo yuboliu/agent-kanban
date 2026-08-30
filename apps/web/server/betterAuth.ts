@@ -215,17 +215,13 @@ export function createAuth(env: AppServices) {
         },
       },
     },
-    // The AK user links their AMA account (a separate FlareAuth identity) whose
-    // email need not match their AK login email, so account linking must allow
-    // different emails — otherwise BetterAuth rejects the link with
-    // "email_doesn't_match". Linking is user-initiated and authenticated, and the
-    // linked token is only used for that user's own AMA calls. GitHub is trusted
-    // the same way: users bind GitHub after sign-in and the internal placeholder
-    // email intentionally differs from their GitHub email.
+    // Account linking must allow different emails — otherwise BetterAuth rejects
+    // the link with "email_doesn't_match". Linking is user-initiated and
+    // authenticated, and the linked token is only used for that user's own calls.
     account: {
       accountLinking: {
         enabled: true,
-        trustedProviders: ["ama", "github"],
+        trustedProviders: [],
         allowDifferentEmails: true,
       },
     },
@@ -241,16 +237,6 @@ export function createAuth(env: AppServices) {
         ...additionalFields,
         id,
       }),
-    },
-    socialProviders: {
-      github: {
-        clientId: env.GITHUB_CLIENT_ID,
-        clientSecret: env.GITHUB_CLIENT_SECRET,
-        scope: ["user", "admin:gpg_key"],
-        // GitHub is bind-only: unauthenticated visitors must never create an
-        // account through the OAuth callback.
-        disableSignUp: true,
-      },
     },
     plugins: [
       bearer(),

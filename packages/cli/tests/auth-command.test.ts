@@ -60,10 +60,6 @@ vi.mock("../src/session/store.js", () => ({
   isPidAlive: mockIsPidAlive,
 }));
 
-vi.mock("../src/commands/github.js", () => ({
-  configureGithubAuth: mockConfigureGithubAuth,
-}));
-
 const { registerAuthCommand } = await import("../src/commands/auth.js");
 
 function makeProgram(): Command {
@@ -236,53 +232,13 @@ describe("auth whoami command", () => {
 });
 
 describe("auth git command", () => {
-  it("prints a minted repository token", async () => {
-    await makeProgram().parseAsync(["auth", "git", "repo-1", "--print-token"], { from: "user" });
+  it("points users to the local gh CLI instead of minting a platform token", async () => {
+    await makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" });
 
     expect(mockGetRepository).toHaveBeenCalledWith("repo-1");
-    expect(mockCreateRepositoryGithubToken).toHaveBeenCalledWith("repo-1");
-    expect(mockConfigureGithubAuth).not.toHaveBeenCalled();
-    expect(consoleLogSpy).toHaveBeenCalledWith("ghs_repo_token");
-  });
-
-  it("configures GitHub auth inside an AK worker", async () => {
-    process.env.AK_WORKER = "1";
-    process.env.AK_WORKSPACE_HOME = "/tmp/ak-session-home";
-
-    await makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" });
-
-    expect(mockCreateRepositoryGithubToken).toHaveBeenCalledWith("repo-1");
-    expect(mockConfigureGithubAuth).toHaveBeenCalledWith("ghs_repo_token", { homeDir: "/tmp/ak-session-home" });
-    expect(consoleLogSpy).toHaveBeenCalledWith("Configured GitHub auth for org/repo; gh credentials configured; expires at 2026-06-25T13:00:00Z");
-    expect(consoleLogSpy).toHaveBeenCalledWith("Token validity: about 1 hour. If it expires, re-run `ak auth git repo-1` to mint a fresh token.");
-  });
-
-  it("uses AK_WORKSPACE_DIR .home for worker GitHub auth when the workspace home is absent", async () => {
-    process.env.AK_WORKER = "1";
-    process.env.AK_WORKSPACE_DIR = "/tmp/ak-workspace";
-
-    await makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" });
-
-    expect(mockConfigureGithubAuth).toHaveBeenCalledWith("ghs_repo_token", { homeDir: join("/tmp/ak-workspace", ".home") });
-  });
-
-  it("refuses worker GitHub auth when the worker home is not isolated", async () => {
-    process.env.AK_WORKER = "1";
-
-    await expect(makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" })).rejects.toThrow(
-      "Refusing to modify GitHub credentials without an isolated worker HOME.",
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      "Platform GitHub token minting was removed. Authenticate the local gh CLI (gh auth login) " +
+        "and workers will use your local git credentials. Repository: https://github.com/org/repo",
     );
-
-    expect(mockCreateRepositoryGithubToken).toHaveBeenCalledWith("repo-1");
-    expect(mockConfigureGithubAuth).not.toHaveBeenCalled();
-  });
-
-  it("refuses to modify credentials outside an AK worker", async () => {
-    await expect(makeProgram().parseAsync(["auth", "git", "repo-1"], { from: "user" })).rejects.toThrow(
-      "Refusing to modify global git credentials outside an AK worker. Use --print-token.",
-    );
-
-    expect(mockCreateRepositoryGithubToken).toHaveBeenCalledWith("repo-1");
-    expect(mockConfigureGithubAuth).not.toHaveBeenCalled();
   });
 });

@@ -50,7 +50,8 @@ export function groupByDependencyLayer(tasks: any[]): any[][] {
   const groups: any[][] = [];
   for (const task of tasks) {
     const level = depth.get(task.id) ?? 0;
-    (groups[level] ??= []).push(task);
+    if (!groups[level]) groups[level] = [];
+    groups[level].push(task);
   }
   return groups.filter(Boolean);
 }
@@ -74,11 +75,7 @@ export function KanbanColumn({ column, labels = [], onTaskClick, onAgentClick }:
         <LayoutGroup>
           <div className={layered ? "space-y-5" : undefined}>
             {groups.map((group, groupIndex) => (
-              <div
-                key={group.map((t: any) => t.id).join(",")}
-                data-dependency-layer={groupIndex}
-                className={layered ? "relative pl-4" : undefined}
-              >
+              <div key={group.map((t: any) => t.id).join(",")} data-dependency-layer={groupIndex} className={layered ? "relative pl-4" : undefined}>
                 {layered && (
                   <>
                     <span aria-hidden="true" className="absolute left-0 top-0 bottom-0 w-px bg-border" />

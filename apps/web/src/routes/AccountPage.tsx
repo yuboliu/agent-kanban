@@ -1,4 +1,4 @@
-import { CheckCircle2, Github, Monitor, RefreshCw, Shield } from "lucide-react";
+import { CheckCircle2, Github, Monitor, Shield } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -7,7 +7,6 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
-import { useGithubAppConfig } from "../hooks/useGithubApp";
 import { accountAuthClient, type LinkedAccount, type SessionEntry, useSession } from "../lib/auth-client";
 import { cn } from "../lib/utils";
 
@@ -19,7 +18,6 @@ export function AccountPage() {
   const { data: session } = useSession();
   const user = session?.user as { username?: string | null; createdAt?: Date | string | null } | undefined;
   const currentToken = (session?.session as { token?: string } | undefined)?.token;
-  const githubAppConfig = useGithubAppConfig();
 
   const [accounts, setAccounts] = useState<LinkedAccount[] | null>(null);
   const [accountsLoading, setAccountsLoading] = useState(true);
@@ -63,22 +61,6 @@ export function AccountPage() {
   }, [loadAccounts, loadSessions]);
 
   const hasCredentialAccount = accounts?.some((a) => a.providerId === "credential") ?? false;
-  const githubAccount = accounts?.find((a) => a.providerId === "github");
-
-  const [githubConnecting, setGithubConnecting] = useState(false);
-  const [githubError, setGithubError] = useState<string | null>(null);
-
-  async function handleConnectGitHub() {
-    setGithubConnecting(true);
-    setGithubError(null);
-    const { error } = await accountAuthClient.linkSocial({ provider: "github", callbackURL: "/settings/account" });
-    setGithubConnecting(false);
-    if (error) {
-      const msg = error.message || "Failed to connect GitHub";
-      setGithubError(msg);
-      toast.error(msg);
-    }
-  }
 
   return (
     <main className="min-w-0 flex-1 space-y-8">
@@ -120,83 +102,6 @@ export function AccountPage() {
             <span className="font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-content-tertiary">v{APP_VERSION}</span>
           </InfoRow>
         </div>
-      </section>
-
-      {/* GitHub connection */}
-      <section className="space-y-4">
-        <SectionHeader icon={Github} title="GitHub" />
-        <div className="max-w-2xl rounded-lg border border-border bg-surface-secondary p-4">
-          {accountsLoading ? (
-            <Skeleton className="h-8 w-48" />
-          ) : accountsError ? (
-            <p role="alert" className="text-sm text-error">
-              {accountsError}
-            </p>
-          ) : githubAccount ? (
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-content-primary">GitHub connected</p>
-                <p className="text-xs text-content-tertiary">
-                  Account ID: <span className="font-mono">{githubAccount.accountId}</span>
-                </p>
-                {githubError && (
-                  <p role="alert" className="text-xs text-error">
-                    {githubError}
-                  </p>
-                )}
-              </div>
-              <Button variant="outline" size="sm" onClick={handleConnectGitHub} disabled={githubConnecting} className="shrink-0">
-                <RefreshCw className="size-3.5" />
-                {githubConnecting ? "Connecting..." : "Reconnect"}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-content-primary">GitHub not connected</p>
-                <p className="text-xs text-content-tertiary">Connect GitHub to enable agent identity sync and GPG key integration.</p>
-                {githubError && (
-                  <p role="alert" className="text-xs text-error">
-                    {githubError}
-                  </p>
-                )}
-              </div>
-              <Button size="sm" onClick={handleConnectGitHub} disabled={githubConnecting} className="shrink-0">
-                <Github className="size-3.5" />
-                {githubConnecting ? "Connecting..." : "Connect GitHub"}
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* GitHub App — distinct from the OAuth connection above: OAuth handles
-            identity/GPG sync, the App grants repo push/PR + delivers PR webhooks. */}
-        {githubAppConfig?.configured && githubAppConfig.install_url && (
-          <div className="max-w-2xl rounded-lg border border-border bg-surface-secondary p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-content-primary">GitHub App</p>
-                {githubAppConfig.installed ? (
-                  <p className="text-xs text-content-tertiary">
-                    Connected{githubAppConfig.accounts[0] ? ` to ${githubAppConfig.accounts.map((a) => `@${a}`).join(", ")}` : ""}. Agent push/PR and
-                    PR status sync are enabled.
-                  </p>
-                ) : (
-                  <p className="text-xs text-content-tertiary">Install the app on your repositories to enable agent push/PR and PR status sync.</p>
-                )}
-              </div>
-              <a
-                href={githubAppConfig.install_url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 border border-border text-content-secondary font-medium text-xs px-3 py-1.5 rounded-md hover:border-accent/30 hover:text-content-primary transition-colors shrink-0"
-              >
-                <Github className="size-3.5" />
-                {githubAppConfig.installed ? "Manage" : "Install App"}
-              </a>
-            </div>
-          </div>
-        )}
       </section>
 
       {/* Change password */}
