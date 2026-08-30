@@ -1,3 +1,6 @@
+> **Upstream history (HISTORICAL)** — this design predates the pure-local
+> migration. AMA was fully removed; keep this record for reference only.
+
 # AMA Runtime Integration
 
 Status: implementation record for `codex/ama-runtime-integration`

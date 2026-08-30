@@ -1,18 +1,18 @@
 # Fully Local Runtime
 
-Agent Kanban can run its web/API service and task execution plane on one local
-machine. This mode does not require an AMA deployment, Cloudflare account,
-Cloudflare Sandbox, hosted D1, Durable Objects, or OIDC provider.
+Agent Kanban runs its web/API service and task execution plane on one local
+machine with Node.js + SQLite. No Cloudflare, hosted D1, Durable Objects, or
+AMA deployment is involved.
 
 ## Components
 
-- `./service_runner.sh` runs the React UI, Hono API, local Miniflare D1,
-  and local WebSocket relay on the machine.
+- `./service_runner.sh` runs the React UI, Hono API, local SQLite, and local
+  WebSocket relay from a single pure-local Node process on the machine.
 - `scripts/local_runtime_runner.sh` builds the CLI, registers the machine with
   the local API, sends heartbeats, polls assigned tasks, and starts installed
   agent CLIs such as Codex or Claude Code.
-- Better Auth user sessions and machine API keys are stored in the local D1
-  database. Worker sessions use local Ed25519 identities.
+- Better Auth user sessions and machine API keys are stored in the local
+  SQLite database. Worker sessions use local Ed25519 identities.
 - GitHub access is independent. Authenticate `gh` locally when repository,
   issue, or pull-request operations are needed.
 
@@ -105,8 +105,9 @@ The `claude` runtime accepts either of Claude Code's authentication modes:
 Custom-endpoint credentials take precedence over the OAuth login, matching
 Claude Code's own behavior.
 
-## Optional AMA Compatibility
+## GitHub Integration (Optional)
 
-`ak start --mode ama` remains available for installations that explicitly use
-an AMA control plane. Fully local installations should use the default
-`--mode local` and leave all `AMA_*` variables unset.
+GitHub OAuth binding and GitHub App webhooks are optional. They activate only
+when the corresponding `GITHUB_*` configuration is present; otherwise the
+relevant endpoints return stable disabled responses and no network calls are
+made. Task-completion polling always uses the local `gh` CLI as a fallback.

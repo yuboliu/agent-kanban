@@ -5,8 +5,6 @@ import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api
 import { setSessionCookie } from "better-auth/cookies";
 import { parseUserOutput } from "better-auth/db";
 import { admin, bearer, username } from "better-auth/plugins";
-import { Kysely } from "kysely";
-import { D1Dialect } from "kysely-d1";
 import * as z from "zod";
 import type { AppServices } from "./types";
 import {
@@ -197,14 +195,7 @@ function usernameBootstrapPlugin(env: AppServices): BetterAuthPlugin {
 
 export function createAuth(env: AppServices) {
   return betterAuth({
-    database: env.nodeDatabase
-      ? // Pure-local runtime: Better Auth talks to better-sqlite3 directly.
-        (env.nodeDatabase as unknown as Parameters<typeof betterAuth>[0]["database"])
-      : // Cloudflare runtime: Kysely D1 dialect.
-        {
-          db: new Kysely({ dialect: new D1Dialect({ database: env.DB as unknown as D1Database }) }),
-          type: "sqlite",
-        },
+    database: env.nodeDatabase as unknown as Parameters<typeof betterAuth>[0]["database"],
     basePath: "/api/auth",
     baseURL: {
       allowedHosts: authAllowedHosts(env),

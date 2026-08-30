@@ -172,7 +172,7 @@ describe("start runtime command", () => {
   });
 
   it("does not pass control-plane secrets to the local daemon process", async () => {
-    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_TOKEN", "CF_API_KEY"]) {
+    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET"]) {
       vi.stubEnv(key, `secret-${key}`);
     }
     vi.stubEnv("ANTHROPIC_API_KEY", "provider-secret");
@@ -184,7 +184,7 @@ describe("start runtime command", () => {
 
     const childEnv = spawnMock.mock.calls[0]?.[2]?.env as Record<string, string>;
     expect(childEnv.ANTHROPIC_API_KEY).toBe("provider-secret");
-    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_TOKEN", "CF_API_KEY"]) {
+    for (const key of ["AK_API_KEY", "OIDC_CLIENT_SECRET"]) {
       expect(childEnv).not.toHaveProperty(key);
     }
   });

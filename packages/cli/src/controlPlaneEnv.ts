@@ -1,11 +1,4 @@
-const CONTROL_PLANE_SECRET_KEYS = new Set([
-  "AK_API_KEY",
-  "OIDC_CLIENT_SECRET",
-  "CLOUDFLARE_API_TOKEN",
-  "CLOUDFLARE_API_KEY",
-  "CF_API_TOKEN",
-  "CF_API_KEY",
-]);
+const CONTROL_PLANE_SECRET_KEYS = new Set(["AK_API_KEY", "OIDC_CLIENT_SECRET"]);
 
 /** Remove machine/control-plane credentials before starting task-owned code. */
 export function withoutControlPlaneSecrets(env: NodeJS.ProcessEnv | Record<string, string>): Record<string, string> {

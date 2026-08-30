@@ -49,8 +49,6 @@ export function createNodeServer(options: NodeServerOptions) {
     GITHUB_CLIENT_ID: cfg.GITHUB_CLIENT_ID ?? "",
     GITHUB_CLIENT_SECRET: cfg.GITHUB_CLIENT_SECRET ?? "",
     MAILS_ADMIN_TOKEN: cfg.MAILS_ADMIN_TOKEN ?? "",
-    CF_ACCOUNT_ID: cfg.CF_ACCOUNT_ID ?? "",
-    CF_API_TOKEN: cfg.CF_API_TOKEN ?? "",
     AK_API_URL: cfg.AK_API_URL,
     GITHUB_APP_WEBHOOK_SECRET: cfg.GITHUB_APP_WEBHOOK_SECRET,
     GITHUB_APP_ID: cfg.GITHUB_APP_ID,

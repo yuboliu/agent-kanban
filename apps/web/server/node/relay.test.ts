@@ -115,6 +115,7 @@ async function setupServices(): Promise<AppServices> {
     DB: database,
     nodeDatabase: database.native,
     AE: { writeDataPoint: () => {} },
+    metricsProvider: { queryMachineMetrics: async () => new Map() },
     TUNNEL_RELAY: { idFromName: () => ({}) as never, get: () => ({ fetch: async () => new Response("x") }) },
     ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
     AUTH_SECRET: "relay-test-secret-relay-test-secret",
@@ -122,8 +123,6 @@ async function setupServices(): Promise<AppServices> {
     GITHUB_CLIENT_ID: "x",
     GITHUB_CLIENT_SECRET: "x",
     MAILS_ADMIN_TOKEN: "x",
-    CF_ACCOUNT_ID: "",
-    CF_API_TOKEN: "",
   } satisfies AppServices;
 }
 

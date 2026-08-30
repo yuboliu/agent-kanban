@@ -126,7 +126,7 @@ const FEATURES = [
   },
   {
     title: "Open Source & Self-Hostable",
-    description: "Deploy on Cloudflare Pages + D1 in minutes. No servers, no vendor lock-in. MIT-convertible license.",
+    description: "Runs as a single Node process with SQLite on your own machine. No cloud dependency, no vendor lock-in.",
   },
 ];
 

@@ -283,27 +283,27 @@ const MOCK_MESSAGES: ThreadMessageLike[] = [
     id: "m4",
     role: "assistant",
     content: [
-      { type: "reasoning", text: "Running deploy; will poll logs once the worker reports healthy." },
-      { type: "text", text: "Deploying to staging now…" },
+      { type: "reasoning", text: "Starting the local server; will poll logs once it reports healthy." },
+      { type: "text", text: "Starting the Node server now…" },
       {
         type: "tool-call",
         toolCallId: "rtc1",
         toolName: "Bash",
-        args: { command: "wrangler deploy --env=staging", description: "Deploy worker to staging" },
+        args: { command: "pnpm --filter @agent-kanban/web server", description: "Start the pure-local Node server" },
         // no result → assistant-ui renders as running
       },
       {
         type: "tool-call",
         toolCallId: "rtc2",
         toolName: "Read",
-        args: { file_path: "apps/web/wrangler.toml" },
+        args: { file_path: "apps/web/server/node/cli.ts" },
       },
       {
         type: "tool-call",
         toolCallId: "rtc3",
         toolName: "WebFetch",
         args: {
-          url: "https://staging.agent-kanban.dev/api/health",
+          url: "http://127.0.0.1:8787/api/health",
           prompt: "Parse the health check response and report status",
         },
       },

@@ -10,6 +10,7 @@
     "prebuild": "pnpm --filter @agent-kanban/shared build && pnpm --filter agent-kanban build && mkdir -p public/cli && cp ../../packages/cli/dist/standalone.js public/cli/ak-standalone.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "deploy": "pnpm build && pnpm server",
     "db:migrate": "tsx server/database/migrate-cli.ts",
     "db:reset": "rm -f \"${AK_DATABASE_PATH:-$HOME/.local/share/agent-kanban/agent-kanban.sqlite}\" && pnpm db:migrate",
     "local:migrate": "tsx server/database/importD1-cli.ts",
@@ -17,7 +18,6 @@
   },
   "dependencies": {
     "@agent-kanban/shared": "workspace:*",
-    "@any-managed-agents/sdk": "github:saltbo/any-managed-agents#e0c95a21fc05f410330c59512e995778f0dbd706&path:sdk/typescript",
     "@assistant-ui/react": "^0.12.24",
     "@assistant-ui/react-markdown": "^0.12.8",
     "@base-ui/react": "^1.3.0",
@@ -35,8 +35,6 @@
     "dayjs": "^1.11.20",
     "highlight.js": "^11.11.1",
     "hono": "^4.12.16",
-    "kysely": "^0.28.15",
-    "kysely-d1": "^0.4.0",
     "lucide-react": "^0.577.0",
     "nanoid": "^5.1.7",
     "openpgp": "^6.3.0",
@@ -60,8 +58,6 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.35.0",
-    "@cloudflare/workers-types": "^4.20260505.1",
     "@tailwindcss/vite": "^4.2.2",
     "@types/better-sqlite3": "^9.6.0",
     "@types/react": "^19.2.14",
@@ -72,7 +68,6 @@
     "tailwindcss": "^4.2.2",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "vite": "^8.0.10",
-    "wrangler": "^4.87.0"
+    "vite": "^8.0.10"
   }
 }

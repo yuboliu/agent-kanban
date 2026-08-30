@@ -1,7 +1,9 @@
 ---
-status: DRAFT
+status: HISTORICAL
 created: 2026-04-19
 ---
+> **Upstream history (HISTORICAL)** — this design predates the pure-local
+> migration (Cloudflare/AMA era). Keep for reference only.
 
 # Event Bus Migration — Unified WebSocket Channel
 

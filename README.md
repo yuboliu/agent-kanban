@@ -17,16 +17,15 @@ Agent Kanban is an agent-first task board where AI coding agents are first-class
 ## About This Fork
 
 This is [yuboliu/agent-kanban](https://github.com/yuboliu/agent-kanban), a local-first fork of
-[saltbo/agent-kanban](https://github.com/saltbo/agent-kanban). Its default setup runs entirely on one machine or LAN and does **not** require a Cloudflare account, hosted D1, Durable Objects, Cloudflare Sandbox, or an AMA deployment.
+[saltbo/agent-kanban](https://github.com/saltbo/agent-kanban). It runs entirely on one machine or LAN with Node.js + SQLite — no Cloudflare, hosted D1, Durable Objects, Cloudflare Sandbox, or AMA deployment.
 
 Changes in this fork:
 
-- `ak start` once again starts the built-in local machine runner by default. It registers the machine, sends heartbeats, polls assigned tasks, creates isolated worktrees, and launches installed agent CLIs locally.
-- `ak start --mode ama` remains available only as an explicit compatibility mode. Local mode does not contact AMA.
-- `./service_runner.sh` reproducibly installs, migrates, and runs the web UI, Hono API, local Miniflare D1, and local WebSocket relay on loopback or the LAN.
+- `ak start` starts the built-in local machine runner by default. It registers the machine, sends heartbeats, polls assigned tasks, creates isolated worktrees, and launches installed agent CLIs locally.
+- `./service_runner.sh` reproducibly installs, migrates, and runs the web UI, Hono API, local SQLite, and local WebSocket relay on loopback or the LAN from a single pure-local Node process.
 - `scripts/local_runtime_runner.sh` reproducibly builds/installs the CLI and starts or restarts the local task runtime.
 - Local Better Auth accepts explicitly allowlisted LAN origins, so the first-run owner registration and username/password login work when the board is opened from another machine.
-- Machine API keys can be provided through `AK_API_KEY` and are stored with directory mode `0700` and file mode `0600`. Inherited control-plane secrets are stripped before starting the daemon, AMA compatibility runner, or task agents; the daemon reads its machine credential from the protected local config, while workers receive their own scoped Ed25519 identity.
+- Machine API keys can be provided through `AK_API_KEY` and are stored with directory mode `0700` and file mode `0600`. Inherited control-plane secrets are stripped before starting the daemon or task agents; the daemon reads its machine credential from the protected local config, while workers receive their own scoped Ed25519 identity.
 - Startup is reported successful only after registration, the first heartbeat, and the polling loop are ready. Invalid restart settings are rejected before a healthy runner is stopped.
 - Task dispatch now resolves agent metadata, subagents, and skills before creating a git worktree. Skills are stored once in a machine-level, content-addressed cache and copied as a fixed snapshot into each task; failed upstream refreshes retain the last-known-good version instead of creating another branch.
 - **Settings → Runtime** controls automatic skill updates and their refresh interval (24 hours by default). Settings are owner-scoped and reach local machines through the existing heartbeat.

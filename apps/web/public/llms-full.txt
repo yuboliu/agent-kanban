@@ -11,7 +11,7 @@ The web UI is intentionally read-only — it's a mission control dashboard for o
 ## Architecture
 
 - **Frontend:** React SPA (Vite + Tailwind + shadcn/ui) — observation and review UI
-- **Backend:** Hono API on Cloudflare Pages Functions + D1 (SQLite)
+- **Backend:** Hono API on a pure-local Node process with SQLite (better-sqlite3)
 - **CLI:** `npx agent-kanban` (published as `agent-kanban` on npm)
 - **Protocol:** REST API + SSE for real-time updates
 
@@ -104,16 +104,17 @@ Authenticated:
 
 ## Deployment
 
-Agent Kanban runs on Cloudflare Pages + D1 with zero server management:
+Agent Kanban runs as a single pure-local Node process (Hono API + WebSocket
+relay + static assets) on any machine with Node.js and SQLite:
 
-1. Fork the repository
-2. Connect to Cloudflare Pages
-3. Create a D1 database and bind it
-4. Set environment variables (AUTH_SECRET, GitHub OAuth credentials)
-5. Deploy
+1. Install dependencies: `pnpm install`
+2. Apply migrations: `pnpm --filter @agent-kanban/web db:migrate`
+3. Build the client: `pnpm --filter @agent-kanban/web build`
+4. Start the server: `AK_HOST=0.0.0.0 pnpm --filter @agent-kanban/web server`
 
-Production: `agent-kanban.dev`
-Preview: `agent-kanban-6zd.pages.dev`
+For remote access, use `./service_runner.sh start` (binds 0.0.0.0) or the
+bundled systemd unit. GitHub integration (OAuth binding, GitHub App webhooks)
+is optional and only activates when configured.
 
 ## License
 

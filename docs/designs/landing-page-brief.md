@@ -1,7 +1,9 @@
 ---
-status: ACTIVE
+status: HISTORICAL
 created: 2026-04-19
 ---
+> **Upstream history (HISTORICAL)** — this brief predates the pure-local
+> migration. Keep for reference only.
 
 # Landing Page Brief — Agent Kanban
 

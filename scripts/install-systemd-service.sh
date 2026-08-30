@@ -121,7 +121,7 @@ mkdir -p "$UNIT_DIR" 2>/dev/null || $SUDO mkdir -p "$UNIT_DIR"
 # and boot ordering. PATH is pinned explicitly because services get a minimal
 # environment — nvm/volta-managed node would otherwise be missing.
 # System units run as root unless told otherwise, so pin the invoking user to
-# keep file ownership (node_modules, .wrangler/state, .run/) consistent.
+# keep file ownership (node_modules, the data dir, .run/) consistent.
 RUN_USER=""
 if [ "$MODE" = "system" ]; then
   RUN_USER="User=${SUDO_USER:-$(id -un)}"

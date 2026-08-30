@@ -26,9 +26,9 @@ export interface MachineMetricsRow {
 }
 
 /**
- * Optional in-process metrics query source. The Cloudflare runtime queries
- * Analytics Engine directly (see metricsRepo); the pure-local runtime reads
- * its own rolling in-memory window through this provider.
+ * In-process metrics query source. The pure-local runtime reads its own
+ * rolling in-memory window through this provider (stage 2 replaced the
+ * Cloudflare Analytics Engine query).
  */
 export interface MetricsQueryProvider {
   queryMachineMetrics(windowSeconds: number): Promise<Map<string, MachineMetricsRow>>;
@@ -55,7 +55,7 @@ export interface AppServices {
   /** Native better-sqlite3 connection for Better Auth (pure-local runtime). */
   nodeDatabase?: NativeDatabase;
   AE: MetricsService;
-  metricsProvider?: MetricsQueryProvider;
+  metricsProvider: MetricsQueryProvider;
   TUNNEL_RELAY: RelayNamespace;
   ASSETS: AssetsService;
   AUTH_SECRET: string;
@@ -63,38 +63,12 @@ export interface AppServices {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   MAILS_ADMIN_TOKEN: string;
-  CF_ACCOUNT_ID: string;
-  CF_API_TOKEN: string;
   AK_API_URL?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
   GITHUB_APP_ID?: string;
   // base64 of the App's PKCS#8 PEM private key
   GITHUB_APP_PRIVATE_KEY?: string;
   // public App slug, used to build the install URL github.com/apps/<slug>/installations/new
-  GITHUB_APP_SLUG?: string;
-  MIN_CLI_VERSION?: string;
-}
-
-// ─── Cloudflare Worker runtime env (stage 2 replaces this) ───────────────────
-// Not assignable to AppServices as-is (DurableObjectNamespace's id types are
-// narrower than the platform-neutral RelayNamespace), so the worker entry
-// adapts it into an AppServices object before handing it to createApi().
-export interface Env {
-  DB: D1Database;
-  AE: AnalyticsEngineDataset;
-  TUNNEL_RELAY: DurableObjectNamespace;
-  ASSETS: Fetcher;
-  AUTH_SECRET: string;
-  ALLOWED_HOSTS: string;
-  GITHUB_CLIENT_ID: string;
-  GITHUB_CLIENT_SECRET: string;
-  MAILS_ADMIN_TOKEN: string;
-  CF_ACCOUNT_ID: string;
-  CF_API_TOKEN: string;
-  AK_API_URL?: string;
-  GITHUB_APP_WEBHOOK_SECRET?: string;
-  GITHUB_APP_ID?: string;
-  GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_APP_SLUG?: string;
   MIN_CLI_VERSION?: string;
 }

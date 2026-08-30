@@ -284,29 +284,11 @@ console.log(JSON.stringify(tasks, null, 2));
 }
 
 discover_installation_id() {
-  local owner_id base_url first_flag second_flag id
+  local owner_id db
   owner_id="$(repo_field "$REPO_ID" owner_id)"
-  base_url="$(api_url)"
-  case "$base_url" in
-    http://localhost* | http://127.0.0.1* | http://0.0.0.0* | http://::1*)
-      first_flag="--local"
-      second_flag="--remote"
-      ;;
-    *)
-      first_flag="--remote"
-      second_flag="--local"
-      ;;
-  esac
-  id="$((cd apps/web && npx wrangler d1 execute agent-kanban-db "$first_flag" --json --command \
-    "SELECT installation_id FROM github_installations WHERE owner_id = '$owner_id' AND suspended_at IS NULL ORDER BY updated_at DESC LIMIT 1;" 2>/dev/null) \
-    | json_query "data[0]?.results?.[0]?.installation_id" 2>/dev/null || true)"
-  if [ -n "$id" ]; then
-    echo "$id"
-    return 0
-  fi
-  (cd apps/web && npx wrangler d1 execute agent-kanban-db "$second_flag" --json --command \
-    "SELECT installation_id FROM github_installations WHERE owner_id = '$owner_id' AND suspended_at IS NULL ORDER BY updated_at DESC LIMIT 1;" 2>/dev/null) \
-    | json_query "data[0]?.results?.[0]?.installation_id"
+  db="${AK_DATABASE_PATH:-$HOME/.local/share/agent-kanban/agent-kanban.sqlite}"
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+  sqlite3 "$db" "SELECT installation_id FROM github_installations WHERE owner_id = '$owner_id' AND suspended_at IS NULL ORDER BY updated_at DESC LIMIT 1;" 2>/dev/null || true
 }
 
 create_real_github_issue() {

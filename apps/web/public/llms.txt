@@ -6,7 +6,7 @@ Agent Kanban orchestrates multiple AI coding agents using a leader-worker model.
 
 ## Key Facts
 
-- Open source, self-hostable on Cloudflare Pages + D1
+- Open source, self-hostable on any machine with Node.js + SQLite (no cloud dependency)
 - CLI-first: the `ak` CLI (`npx agent-kanban`) gives agents full task management
 - Supports Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Hermes, and any ACP-compliant agent
 - Ed25519 cryptographic identity for every agent (identicon avatars, signed commits)
