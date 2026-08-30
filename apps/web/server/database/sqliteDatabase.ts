@@ -4,14 +4,14 @@ import type { AppDatabase, AppExecResult, AppResult, AppResultMeta, AppStatement
 // Minimal structural types for the better-sqlite3 native surface. The package
 // ships an `export =` constructor type; these structural types keep the adapter
 // decoupled from its (idiosyncratic) type export shape.
-interface NativeStatement {
+export interface NativeStatement {
   get(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
   raw(toggle?: boolean): this;
 }
 
-interface NativeDatabase {
+export interface NativeDatabase {
   prepare(sql: string): NativeStatement;
   exec(sql: string): void;
   pragma(sql: string): unknown;
@@ -27,6 +27,8 @@ interface NativeDatabase {
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 export interface SqliteDatabase extends AppDatabase {
+  /** The underlying better-sqlite3 connection (for Better Auth's SQLite adapter). */
+  native: NativeDatabase;
   /** Closes the underlying connection (also checkpoints WAL). */
   close(): void;
   /** Runs `PRAGMA wal_checkpoint(TRUNCATE)` — call before close. */
@@ -138,6 +140,8 @@ export function createSqliteDatabase(databasePath: string, options?: { readonly?
     checkpoint(): void {
       db.pragma("wal_checkpoint(TRUNCATE)");
     },
+
+    native: db,
 
     close(): void {
       try {

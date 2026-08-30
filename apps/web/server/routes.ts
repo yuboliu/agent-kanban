@@ -2484,11 +2484,11 @@ api.get("/api/tunnel/ws", async (c) => {
 
 api.get("/api/tasks/:id/stream", async (c) => {
   const lastEventId = c.req.header("Last-Event-ID") || null;
-  return createSSEResponse(c.env, c.req.param("id"), lastEventId);
+  return createSSEResponse(c.env, c.req.param("id"), lastEventId, c.req.raw.signal);
 });
 
 api.get("/api/boards/:id/stream", async (c) => {
-  return createBoardSSEResponse(c.env, c.req.param("id"), c.get("ownerId"));
+  return createBoardSSEResponse(c.env, c.req.param("id"), c.get("ownerId"), c.req.raw.signal);
 });
 
 // ─── Boards ───

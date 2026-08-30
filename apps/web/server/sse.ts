@@ -23,7 +23,12 @@ function mergeByTime(notes: SSEEvent[], messages: SSEEvent[]): SSEEvent[] {
   return merged;
 }
 
-export async function createSSEResponse(env: AppServices, taskId: string, lastEventId: string | null): Promise<Response> {
+// Long-lived SSE: no Cloudflare 25s ceiling, so the stream polls until the
+// client disconnects. A comment-only heartbeat keeps proxies from closing idle
+// connections. Aborts (client disconnect / request cancelled) stop the loop.
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+export async function createSSEResponse(env: AppServices, taskId: string, lastEventId: string | null, signal?: AbortSignal): Promise<Response> {
   const db = env.DB;
 
   // Resolve lastEventId before creating the stream
@@ -50,6 +55,21 @@ export async function createSSEResponse(env: AppServices, taskId: string, lastEv
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    signal?.removeEventListener("abort", close);
+    writer.close().catch(() => {});
+  };
+
+  const heartbeat = setInterval(() => {
+    writer.write(encoder.encode(": ping\n\n")).catch(close);
+  }, HEARTBEAT_INTERVAL_MS);
+
+  signal?.addEventListener("abort", close);
 
   const write = (event: SSEEvent) => {
     let msg = `id: ${event.id}\n`;
@@ -144,11 +164,11 @@ export async function createSSEResponse(env: AppServices, taskId: string, lastEv
       }
     }
 
-    await writer.close();
+    close();
   };
 
   // Run in background — don't await
-  run().catch(() => writer.close().catch(() => {}));
+  run().catch(close);
 
   return new Response(readable, {
     headers: {

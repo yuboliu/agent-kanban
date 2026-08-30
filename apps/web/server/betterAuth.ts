@@ -255,12 +255,14 @@ function usernameBootstrapPlugin(env: AppServices): BetterAuthPlugin {
 
 export function createAuth(env: AppServices) {
   return betterAuth({
-    database: {
-      // The Kysely D1 dialect is used while the runtime is Cloudflare; the
-      // local Node runtime swaps in its own SQLite dialect (stage 2).
-      db: new Kysely({ dialect: new D1Dialect({ database: env.DB as unknown as D1Database }) }),
-      type: "sqlite",
-    },
+    database: env.nodeDatabase
+      ? // Pure-local runtime: Better Auth talks to better-sqlite3 directly.
+        (env.nodeDatabase as unknown as Parameters<typeof betterAuth>[0]["database"])
+      : // Cloudflare runtime: Kysely D1 dialect.
+        {
+          db: new Kysely({ dialect: new D1Dialect({ database: env.DB as unknown as D1Database }) }),
+          type: "sqlite",
+        },
     basePath: "/api/auth",
     baseURL: {
       allowedHosts: authAllowedHosts(env),

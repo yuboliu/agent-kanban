@@ -31,14 +31,23 @@ export function parseSkillFrontmatter(raw: string, fallbackName: string): { name
   return { name: name || fallbackName, description };
 }
 
-// Bundled at build time: keys are paths like "../../../skills/<name>/SKILL.md".
+// Bundled at build time by Vite: keys are paths like "../../../skills/<name>/SKILL.md".
 // Under vitest this resolves against the real repo; in the worker bundle the
-// contents are inlined as strings.
-const BUNDLED_SKILLS = import.meta.glob("../../../skills/*/SKILL.md", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
+// contents are inlined as strings. Plain-node runtimes have no import.meta.glob,
+// so the call is guarded and the fs-based listBuiltinSkills() fallback is used.
+const BUNDLED_SKILLS: Record<string, string> = (() => {
+  try {
+    const glob = (import.meta as { glob?: unknown }).glob;
+    if (typeof glob !== "function") return {};
+    return glob("../../../skills/*/SKILL.md", {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    }) as Record<string, string>;
+  } catch {
+    return {};
+  }
+})();
 
 function skillsFromBundle(bundled: Record<string, string>): { name: string; description: string; body: string }[] {
   const skills = Object.entries(bundled).map(([path, raw]) => {

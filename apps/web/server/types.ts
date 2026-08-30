@@ -1,5 +1,6 @@
 import type { Session, User } from "better-auth";
 import type { AppDatabase } from "./database/appDatabase";
+import type { NativeDatabase } from "./database/sqliteDatabase";
 
 // ─── Platform-neutral service contract ────────────────────────────────────────
 // Everything the API layer needs to run, without Cloudflare-specific types.
@@ -15,6 +16,22 @@ export interface MetricsService {
     doubles?: number[] | undefined;
     indexes?: string[] | undefined;
   }): void;
+}
+
+export interface MachineMetricsRow {
+  machine_id: string;
+  total_requests: number;
+  error_requests: number;
+  avg_latency: number;
+}
+
+/**
+ * Optional in-process metrics query source. The Cloudflare runtime queries
+ * Analytics Engine directly (see metricsRepo); the pure-local runtime reads
+ * its own rolling in-memory window through this provider.
+ */
+export interface MetricsQueryProvider {
+  queryMachineMetrics(windowSeconds: number): Promise<Map<string, MachineMetricsRow>>;
 }
 
 export interface AssetsService {
@@ -35,7 +52,10 @@ export interface RelayNamespace {
 
 export interface AppServices {
   DB: AppDatabase;
+  /** Native better-sqlite3 connection for Better Auth (pure-local runtime). */
+  nodeDatabase?: NativeDatabase;
   AE: MetricsService;
+  metricsProvider?: MetricsQueryProvider;
   TUNNEL_RELAY: RelayNamespace;
   ASSETS: AssetsService;
   AUTH_SECRET: string;

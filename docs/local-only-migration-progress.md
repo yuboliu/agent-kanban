@@ -8,8 +8,8 @@
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 冻结基线与迁移预检 | ✅ 已交付(commit `0caf692`) |
-| 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | 🔶 部分完成 |
-| 2 | 纯 Node 运行时 | ⏳ 未开始 |
+| 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
+| 2 | 纯 Node 运行时 | 🔶 核心已交付(commit `aeb23a8`),scripts/vite 代理待后续 |
 | 3 | 删除 AMA 双轨运行时 | ⏳ 未开始 |
 | 4 | Local Maintainer 完整替代 | ⏳ 未开始 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
