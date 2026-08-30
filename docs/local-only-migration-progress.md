@@ -48,6 +48,9 @@
 
 ## 阶段 3 评估(AMA 删除)
 
+- **阶段 3.3 已完成(commit `586727c`)**:taskDispatch 删除 sendTaskMessageToAma/
+  sendTaskRejectToAma 及注解 helper;routes 的 reject/notes/messages 不再发送
+  AMA session 消息。E2E review-actions + task-card-chat 通过。
 - **阶段 3.2 已完成(commit `58dd78b`)**:modelCatalog 只聚合本地机器(删 AMA
   cloud catalog/runner 模型);删除 maintainerTriggerConcurrency.ts(纯 AMA);
   worker/node scheduler 不再 backfill trigger 并发;githubWebhook 不再调用
