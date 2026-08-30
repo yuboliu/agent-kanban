@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { signUpAndGetBoard } from "../helpers/auth";
+import { signUpAndGetBoard, usernameFromEmail } from "../helpers/auth";
 
 const d1Dir = join(process.cwd(), "apps/web/.wrangler/state/v3/d1/miniflare-D1DatabaseObject");
 
@@ -26,9 +26,12 @@ test.describe("Agent edit — codex model catalog", () => {
     const email = `codex_models_${Date.now()}@example.com`;
     await signUpAndGetBoard(page, email);
 
-    // 2. Resolve the signed-in user's id (machines.owner_id) from the user table
-    const ownerId = runSql(`SELECT id FROM user WHERE email = '${sqlString(email)}';`);
-    if (!ownerId) throw new Error(`No user row found for ${email}`);
+    // 2. Resolve the signed-in user's id (machines.owner_id) from the user table.
+    // Fixtures are username-confirmed, so their email is an internal placeholder
+    // and the username (derived deterministically from the email) is the lookup key.
+    const username = usernameFromEmail(email);
+    const ownerId = runSql(`SELECT id FROM user WHERE username = '${sqlString(username)}';`);
+    if (!ownerId) throw new Error(`No user row found for ${username}`);
 
     // 3. Seed an online machine reporting three codex models with distinct reasoning efforts
     const now = new Date().toISOString();

@@ -156,7 +156,7 @@ export function AdminUsersPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Input placeholder="Search by email…" value={searchInput} onChange={(e) => handleSearchChange(e.target.value)} className="max-w-xs" />
+        <Input placeholder="Search by username…" value={searchInput} onChange={(e) => handleSearchChange(e.target.value)} className="max-w-xs" />
         <Select value={roleFilter} onValueChange={applyRoleFilter}>
           <SelectTrigger size="sm" className="w-32">
             <SelectValue />
@@ -227,12 +227,12 @@ export function AdminUsersPage() {
                       <div className="flex items-center gap-3">
                         <Avatar size="sm">
                           <AvatarFallback className="bg-surface-tertiary text-content-secondary text-xs">
-                            {(user.name || user.email)[0].toUpperCase()}
+                            {(user.name || user.username || "?")[0].toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div>
                           <p className="text-content-primary text-sm font-medium leading-tight">{user.name || "—"}</p>
-                          <p className="font-mono text-xs text-content-tertiary leading-tight">{user.email}</p>
+                          {user.username && <p className="font-mono text-xs text-content-tertiary leading-tight">@{user.username}</p>}
                         </div>
                       </div>
                     </TableCell>

@@ -18,7 +18,7 @@ const APP_VERSION = __APP_VERSION__;
 
 export function AccountPage() {
   const { data: session } = useSession();
-  const user = session?.user as { email?: string | null; emailVerified?: boolean; createdAt?: Date | string | null } | undefined;
+  const user = session?.user as { username?: string | null; createdAt?: Date | string | null } | undefined;
   const currentToken = (session?.session as { token?: string } | undefined)?.token;
   const githubAppConfig = useGithubAppConfig();
 
@@ -144,9 +144,8 @@ export function AccountPage() {
       <section className="space-y-4">
         <SectionHeader icon={Shield} title="Identity" />
         <div className="max-w-2xl space-y-3 rounded-lg border border-border bg-surface-secondary p-4">
-          <InfoRow label="Email">
-            <span className="font-mono text-sm text-content-primary">{user?.email ?? "—"}</span>
-            <EmailVerificationBadge verified={user?.emailVerified === true} />
+          <InfoRow label="Username">
+            <span className="font-mono text-sm text-content-primary">{user?.username ? `@${user.username}` : "—"}</span>
           </InfoRow>
           {user?.createdAt && (
             <InfoRow label="Member since">
@@ -551,7 +550,7 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 function ProviderBadge({ providerId }: { providerId: string }) {
-  const label = providerId === "credential" ? "Email/Password" : providerId.charAt(0).toUpperCase() + providerId.slice(1);
+  const label = providerId === "credential" ? "Username/Password" : providerId.charAt(0).toUpperCase() + providerId.slice(1);
   return (
     <Badge variant="outline" className="border-border text-content-secondary">
       {providerId === "github" && <Github className="size-3" />}
@@ -592,22 +591,5 @@ function PasswordField({
       />
       {children}
     </div>
-  );
-}
-
-function EmailVerificationBadge({ verified }: { verified: boolean }) {
-  if (verified) {
-    return (
-      <Badge variant="outline" className="border-success/30 bg-success/10 text-success">
-        <CheckCircle2 className="size-3" />
-        Verified
-      </Badge>
-    );
-  }
-
-  return (
-    <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">
-      Unverified
-    </Badge>
   );
 }

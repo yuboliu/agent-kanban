@@ -234,6 +234,19 @@ import type { Env } from "./types";
 const api = new Hono<{ Bindings: Env }>();
 const logger = createLogger("api");
 
+// Permanently disabled public authentication endpoints. Account creation is
+// exclusively first-run bootstrap; email verification and email/social
+// sign-in are gone. GitHub OAuth remains available as a post-login binding
+// via /link-social + /callback/github.
+const BLOCKED_AUTH_PATHS = new Set<string>([
+  "/api/auth/sign-up/email",
+  "/api/auth/sign-in/email",
+  "/api/auth/sign-in/social",
+  "/api/auth/send-verification-email",
+  "/api/auth/verify-email",
+  "/api/auth/admin/create-user",
+]);
+
 function markLocalRuntimeSurface(c: { header: (name: string, value: string) => void }) {
   c.header("X-AK-Runtime-Surface", "local-daemon");
 }
@@ -934,9 +947,17 @@ api.onError((err, c) => {
   return c.json({ error: { code: "INTERNAL_ERROR", message: err.message || "Internal server error" } }, 500);
 });
 
-// Better Auth handler — must be before auth middleware
-api.on(["GET", "POST"], "/api/auth/*", async (c) => {
+// Better Auth handler — must be before auth middleware. PUT is needed for the
+// username-bootstrap plugin's PUT /api/auth/username endpoint.
+api.on(["GET", "POST", "PUT"], "/api/auth/*", async (c) => {
   try {
+    // Public registration / email flows are permanently disabled. Account
+    // creation is only available through POST /api/auth/bootstrap/register
+    // (first-run, zero-user state) and legacy email compat login goes through
+    // POST /api/auth/sign-in/legacy-email; GitHub is bind-only after sign-in.
+    if (BLOCKED_AUTH_PATHS.has(c.req.path)) {
+      return c.json({ error: { code: "DISABLED", message: "This authentication method is no longer available" } }, { status: 403 });
+    }
     const auth = createAuth(c.env);
     // Block disconnecting AMA while AMA-backed resources still exist (any
     // non-builtin agent or machine), so we never leave dangling references. The

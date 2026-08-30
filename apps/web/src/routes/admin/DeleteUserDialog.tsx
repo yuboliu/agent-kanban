@@ -31,7 +31,7 @@ export function DeleteUserDialog({ user, open, onClose, onSuccess }: Props) {
           <DialogTitle>Delete User</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-content-secondary">
-          Delete <span className="font-mono text-content-primary">{user.email}</span>?
+          Delete <span className="font-mono text-content-primary">{user.username ? `@${user.username}` : user.name}</span>?
         </p>
         <p className="text-xs text-content-tertiary">This action cannot be undone.</p>
         <DialogFooter showCloseButton>

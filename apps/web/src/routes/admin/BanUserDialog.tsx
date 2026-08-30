@@ -45,7 +45,7 @@ export function BanUserDialog({ user, open, onClose, onSuccess }: Props) {
           <DialogTitle>Ban User</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-content-tertiary">
-          User: <span className="font-mono text-content-primary">{user.email}</span>
+          User: <span className="font-mono text-content-primary">{user.username ? `@${user.username}` : user.name}</span>
         </p>
         <div className="space-y-3">
           <Textarea placeholder="Ban reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} className="min-h-[72px]" />

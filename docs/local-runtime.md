@@ -24,8 +24,11 @@ Start the local web/API service in terminal one:
 ./service_runner.sh
 ```
 
-Open `http://127.0.0.1:6265`, sign in with email/password, verify through the
-link printed by the service, and create a machine API key in account settings.
+Open `http://127.0.0.1:6265`. On the very first run the auth page shows the
+owner-account registration form: pick a username, display name and password.
+That first account is the admin and registration is then locked forever —
+afterwards only username/password sign-in is available. Create a machine API
+key in account settings for the local runtime.
 
 Authenticate the local GitHub CLI if repository work is required:
 

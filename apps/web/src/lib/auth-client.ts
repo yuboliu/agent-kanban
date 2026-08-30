@@ -1,6 +1,6 @@
 import { agentAuthClient } from "@better-auth/agent-auth/client";
 import { apiKeyClient } from "@better-auth/api-key/client";
-import { adminClient, genericOAuthClient } from "better-auth/client/plugins";
+import { adminClient, genericOAuthClient, usernameClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
 const TOKEN_KEY = "auth-token";
@@ -35,7 +35,7 @@ export async function refreshAuthToken(): Promise<string | null> {
 }
 
 export const authClient = createAuthClient({
-  plugins: [agentAuthClient(), apiKeyClient(), adminClient(), genericOAuthClient()],
+  plugins: [agentAuthClient(), apiKeyClient(), adminClient(), genericOAuthClient(), usernameClient()],
   fetchOptions: {
     auth: {
       type: "Bearer",
@@ -50,7 +50,7 @@ export const authClient = createAuthClient({
   },
 });
 
-export const { useSession, signIn, signUp, signOut, sendVerificationEmail } = authClient;
+export const { useSession, signIn, signOut } = authClient;
 
 // ─── Account API types ────────────────────────────────────────────────────────
 // Better Auth generates these methods dynamically from the server endpoints.
@@ -91,3 +91,80 @@ type AccountAuthClient = {
 };
 
 export const accountAuthClient = authClient as unknown as AccountAuthClient;
+
+// ─── Username bootstrap API ──────────────────────────────────────────────────
+// Custom server endpoints provided by the username-bootstrap plugin. They are
+// not generated on the client, so they are wrapped as plain fetches.
+
+export type BootstrapStatus = {
+  registrationOpen: boolean;
+  legacyEmailLoginEnabled: boolean;
+};
+
+export type AuthApiError = { message: string; code?: string };
+
+export async function getBootstrapStatus(): Promise<BootstrapStatus | null> {
+  try {
+    const res = await fetch("/api/auth/bootstrap/status", { credentials: "include" });
+    if (!res.ok) return null;
+    return (await res.json()) as BootstrapStatus;
+  } catch {
+    return null;
+  }
+}
+
+async function authFetch<T>(url: string, body: Record<string, unknown>): Promise<{ data: T | null; error: AuthApiError | null }> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const token = res.headers.get("set-auth-token");
+    if (token) setAuthToken(token);
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
+      return { data: null, error: { message: payload?.message || `Request failed (${res.status})`, code: payload?.code } };
+    }
+    const data = (await res.json()) as T;
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : "Request failed" } };
+  }
+}
+
+export function bootstrapRegister(body: { username: string; name: string; password: string }) {
+  return authFetch<{ token: string; user: unknown }>("/api/auth/bootstrap/register", body);
+}
+
+export function signInLegacyEmail(body: { email: string; password: string }) {
+  return authFetch<{ token: string; user: unknown }>("/api/auth/sign-in/legacy-email", body);
+}
+
+export async function updateUsername(username: string): Promise<{ data: unknown | null; error: AuthApiError | null }> {
+  try {
+    const token = getAuthToken();
+    const res = await fetch("/api/auth/username", {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ username }),
+    });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
+      return { data: null, error: { message: payload?.message || `Request failed (${res.status})`, code: payload?.code } };
+    }
+    const data = await res.json();
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : "Request failed" } };
+  }
+}
+
+export function isLegacyEmailInput(value: string): boolean {
+  return value.includes("@");
+}

@@ -54,7 +54,7 @@ function ThemeIcon({ theme }: { theme: Theme }) {
 
 export function Header() {
   const { data: session } = useSession();
-  const user = session?.user as { name?: string; email?: string; image?: string; role?: string } | undefined;
+  const user = session?.user as { name?: string; username?: string; image?: string; role?: string } | undefined;
   const isAdmin = user?.role === "admin";
   const { boards, refresh: refreshBoards } = useBoards();
   const { boardId } = useParams<{ boardId: string }>();
@@ -165,8 +165,8 @@ export function Header() {
               {user && (
                 <>
                   <div className="px-2 py-1.5">
-                    <p className="text-sm font-medium text-content-primary truncate">{user.name || user.email}</p>
-                    {user.name && user.email && <p className="text-xs text-content-tertiary truncate">{user.email}</p>}
+                    <p className="text-sm font-medium text-content-primary truncate">{user.name || user.username || "User"}</p>
+                    {user.username && <p className="text-xs text-content-tertiary truncate">@{user.username}</p>}
                   </div>
                   <DropdownMenuSeparator />
                 </>

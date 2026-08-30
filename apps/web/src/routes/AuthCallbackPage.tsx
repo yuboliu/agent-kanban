@@ -6,7 +6,7 @@ export function AuthCallbackPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    authClient.getSession().then(({ data }) => {
+    void authClient.getSession().then(({ data }: { data: { session?: { token?: string } | null } | null }) => {
       if (data?.session?.token) {
         setAuthToken(data.session.token);
         navigate("/", { replace: true });

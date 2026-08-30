@@ -1,15 +1,14 @@
-import { CheckCircle2, CircleAlert } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Header } from "../components/Header";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { authClient, useSession } from "../lib/auth-client";
+import { authClient, updateUsername, useSession } from "../lib/auth-client";
 import { cn } from "../lib/utils";
 import { AccountPage } from "./AccountPage";
 import { RuntimeSettingsPage } from "./RuntimeSettingsPage";
@@ -17,9 +16,9 @@ import { SchedulingSettingsPage } from "./SchedulingSettingsPage";
 
 type SettingsUser = {
   name?: string | null;
-  email?: string | null;
+  username?: string | null;
+  usernameConfirmed?: boolean | null;
   image?: string | null;
-  emailVerified?: boolean;
 };
 
 const settingsLinks = [
@@ -32,18 +31,26 @@ const settingsLinks = [
 function ProfileSettingsPage() {
   const { data: session, refetch } = useSession();
   const user = session?.user as SettingsUser | undefined;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [name, setName] = useState(user?.name ?? "");
+  const [username, setUsername] = useState(user?.username ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const confirmingUsername = searchParams.get("confirm") === "1" && user?.usernameConfirmed === false;
+
   useEffect(() => {
     setName(user?.name ?? "");
-  }, [user?.name]);
+    setUsername(user?.username ?? "");
+  }, [user?.name, user?.username]);
 
   const trimmedName = name.trim();
-  const isDirty = trimmedName !== (user?.name ?? "");
-  const canSave = isDirty && trimmedName.length > 0 && !isSaving;
-  const fallback = profileInitial(trimmedName || user?.email || "?");
+  const trimmedUsername = username.trim().toLowerCase();
+  const nameDirty = trimmedName !== (user?.name ?? "");
+  const usernameDirty = trimmedUsername !== (user?.username ?? "");
+  const canSave = (nameDirty || usernameDirty || confirmingUsername) && trimmedName.length > 0 && trimmedUsername.length > 0 && !isSaving;
+  const fallback = profileInitial(trimmedName || trimmedUsername || "?");
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,19 +58,37 @@ function ProfileSettingsPage() {
 
     setError(null);
     setIsSaving(true);
-    const { error } = await authClient.updateUser({
-      name: trimmedName,
-    });
-    setIsSaving(false);
 
-    if (error) {
-      setError(error.message || "Failed to save profile");
-      toast.error("Failed to save profile");
-      return;
+    if (usernameDirty || confirmingUsername) {
+      const { error: usernameError } = await updateUsername(trimmedUsername);
+      if (usernameError) {
+        setError(usernameError.message || "Failed to save username");
+        toast.error("Failed to save username");
+        setIsSaving(false);
+        return;
+      }
     }
 
+    if (nameDirty) {
+      const { error: nameError } = await authClient.updateUser({ name: trimmedName });
+      if (nameError) {
+        setError(nameError.message || "Failed to save profile");
+        toast.error("Failed to save profile");
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    setIsSaving(false);
     await refetch();
-    toast.success("Profile saved");
+
+    if (confirmingUsername) {
+      setSearchParams({}, { replace: true });
+      navigate("/");
+      toast.success("Username confirmed");
+    } else {
+      toast.success("Profile saved");
+    }
   }
 
   return (
@@ -72,6 +97,13 @@ function ProfileSettingsPage() {
         <h1 className="text-xl font-semibold tracking-tight text-content-primary">Profile</h1>
         <p className="mt-1 text-sm text-content-secondary">Manage the identity shown across Agent Kanban.</p>
       </div>
+
+      {confirmingUsername && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          <p>Your account was created before usernames existed. Confirm your username to continue — email login will be disabled after this.</p>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
         <section className="space-y-4">
@@ -95,18 +127,23 @@ function ProfileSettingsPage() {
                 />
                 {trimmedName.length === 0 && <p className="text-xs text-error">Display name is required.</p>}
               </Field>
+
+              <Field label="Username" htmlFor="profile-username">
+                <Input
+                  id="profile-username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  aria-invalid={trimmedUsername.length > 0 && (trimmedUsername.length < 3 || trimmedUsername.length > 64)}
+                  autoComplete="username"
+                />
+                {trimmedUsername.length > 0 && (trimmedUsername.length < 3 || trimmedUsername.length > 64) && (
+                  <p className="text-xs text-error">Username must be 3–64 characters.</p>
+                )}
+                <p className="text-xs text-content-tertiary">
+                  Lowercase letters, digits, dots, underscores and hyphens. Start and end with a letter or digit.
+                </p>
+              </Field>
             </div>
-          </div>
-        </section>
-
-        <section className="grid gap-4 border-t border-border pt-5 md:grid-cols-2">
-          <Field label="Email" htmlFor="profile-email">
-            <Input id="profile-email" value={user?.email ?? ""} readOnly className="text-content-secondary" />
-          </Field>
-
-          <div>
-            <Label className="mb-2 text-xs uppercase tracking-[0.06em] text-content-tertiary">Email verification</Label>
-            <EmailVerificationBadge verified={user?.emailVerified === true} />
           </div>
         </section>
 
@@ -118,9 +155,9 @@ function ProfileSettingsPage() {
 
         <div className="flex items-center gap-3 border-t border-border pt-5">
           <Button type="submit" disabled={!canSave}>
-            {isSaving ? "Saving..." : "Save profile"}
+            {isSaving ? "Saving..." : confirmingUsername ? "Confirm username" : "Save profile"}
           </Button>
-          {!isDirty && <p className="text-xs text-content-tertiary">No unsaved changes</p>}
+          {!confirmingUsername && !nameDirty && !usernameDirty && <p className="text-xs text-content-tertiary">No unsaved changes</p>}
         </div>
       </form>
     </main>
@@ -135,24 +172,6 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
       </Label>
       {children}
     </div>
-  );
-}
-
-function EmailVerificationBadge({ verified }: { verified: boolean }) {
-  if (verified) {
-    return (
-      <Badge variant="outline" className="border-success/30 bg-success/10 text-success">
-        <CheckCircle2 className="size-3" />
-        Verified
-      </Badge>
-    );
-  }
-
-  return (
-    <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">
-      <CircleAlert className="size-3" />
-      Unverified
-    </Badge>
   );
 }
 

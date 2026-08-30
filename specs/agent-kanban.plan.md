@@ -2,7 +2,7 @@
 
 ## Application Overview
 
-Agent Kanban is a React SPA backed by a Hono API on Cloudflare Pages + D1. It provides an agent-first kanban board for managing AI-driven tasks. The app uses email/password and GitHub OAuth authentication (Better Auth). After sign-in, users manage boards (5-column kanban), machines (daemon runners), agents (AI workers with cryptographic identity), and repositories. All pages except /auth and /auth/callback are behind a ProtectedRoute that redirects unauthenticated users to /auth.
+Agent Kanban is a React SPA backed by a Hono API on Cloudflare Pages + D1. It provides an agent-first kanban board for managing AI-driven tasks. The app uses username/password authentication (Better Auth username plugin). The first run registers a single owner account (admin) through the bootstrap flow; public registration then stays locked forever. GitHub OAuth is available only as a post-login binding. After sign-in, users manage boards (5-column kanban), machines (daemon runners), agents (AI workers with cryptographic identity), and repositories. All pages except /auth and /auth/callback are behind a ProtectedRoute that redirects unauthenticated users to /auth.
 
 ## Test Scenarios
 
@@ -10,150 +10,98 @@ Agent Kanban is a React SPA backed by a Hono API on Cloudflare Pages + D1. It pr
 
 **Seed:** `tests/seed.spec.ts`
 
-#### 1.1. Auth page renders sign-in form by default
+#### 1.1. Auth page renders username sign-in form when setup is complete
 
 **File:** `tests/auth/auth-page-default-state.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
+  1. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: false, legacyEmailLoginEnabled: false }`
+  2. Navigate to http://localhost:6265/auth
     - expect: The page title 'Agent Kanban' is visible with 'Kanban' in accent color
     - expect: The subtitle 'Sign in to your account' is visible
-    - expect: An email input field is present
+    - expect: A username input field is present
     - expect: A password input field is present
     - expect: A 'Sign In' submit button is visible
-    - expect: A 'Continue with GitHub' button is visible
-    - expect: A 'Sign up' toggle link is visible
-    - expect: The Name field is NOT present (sign-up only field)
+    - expect: No 'Continue with GitHub' button (GitHub is bind-only after sign-in)
+    - expect: No 'Sign up' toggle link (registration is locked after bootstrap)
+    - expect: No email input field
 
-#### 1.2. Switch between sign-in and sign-up modes
+#### 1.2. First-run registration page
 
-**File:** `tests/auth/auth-mode-toggle.spec.ts`
+**File:** `tests/auth/auth-bootstrap-register.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
-    - expect: Page is in sign-in mode, subtitle reads 'Sign in to your account'
-  2. Click the 'Sign up' toggle link at the bottom of the form
-    - expect: The form switches to sign-up mode
-    - expect: Subtitle changes to 'Create a new account'
-    - expect: A 'Name' input field appears above the email field
-    - expect: The submit button label changes to 'Sign Up'
-    - expect: The toggle link at the bottom changes to 'Sign in'
-  3. Click the 'Sign in' toggle link at the bottom
-    - expect: The form switches back to sign-in mode
-    - expect: The Name field disappears
-    - expect: Subtitle returns to 'Sign in to your account'
-    - expect: Submit button label returns to 'Sign In'
+  1. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: true, legacyEmailLoginEnabled: false }`
+  2. Navigate to http://localhost:6265/auth
+    - expect: The subtitle 'Create the owner account' is visible
+    - expect: Display name, Username and Password input fields are present
+    - expect: A 'Create owner account' submit button is visible
+    - expect: No 'Continue with GitHub' button and no sign-in/sign-up toggle
+  3. Fill Display name, Username and Password, then click 'Create owner account'
+    - expect: `POST /api/auth/bootstrap/register` receives `{ username, name, password }`
+    - expect: The user is redirected away from /auth
 
 #### 1.3. Sign-in form validation — empty fields
 
 **File:** `tests/auth/auth-signin-empty-validation.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
+  1. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: false, legacyEmailLoginEnabled: false }`
+  2. Navigate to http://localhost:6265/auth
     - expect: Sign-in form is displayed
-  2. Click the 'Sign In' button without entering any credentials
+  3. Click the 'Sign In' button without entering any credentials
     - expect: The form does not submit
-    - expect: Browser native validation or an error state prevents submission because the email field is required
+    - expect: Browser native validation or an error state prevents submission because the username field is required
 
-#### 1.4. Sign-in form validation — invalid email format
-
-**File:** `tests/auth/auth-signin-invalid-email.spec.ts`
-
-**Steps:**
-  1. Navigate to http://localhost:6265/auth
-    - expect: Sign-in form is displayed
-  2. Type 'notanemail' into the email field and 'password123' into the password field, then click 'Sign In'
-    - expect: The form does not submit
-    - expect: Browser native email validation blocks the submission or an error message is shown
-
-#### 1.5. Sign-in with wrong credentials shows error
+#### 1.4. Sign-in with wrong credentials shows error
 
 **File:** `tests/auth/auth-signin-wrong-credentials.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
+  1. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: false, legacyEmailLoginEnabled: false }`
+  2. Navigate to http://localhost:6265/auth
     - expect: Sign-in form is displayed
-  2. Enter 'wrong@example.com' in the email field and 'wrongpassword' in the password field
-  3. Click the 'Sign In' button
-    - expect: An error message is displayed below the password field (in the error text area styled with 'text-error')
+  3. Enter an unknown username and a password, then click 'Sign In'
+    - expect: An error message is displayed below the password field (styled with 'text-error')
     - expect: The user remains on the /auth page
     - expect: The submit button returns from its loading '...' state back to 'Sign In'
 
-#### 1.6. Sign-up form validation — password minimum length
-
-**File:** `tests/auth/auth-signup-password-minlength.spec.ts`
-
-**Steps:**
-  1. Navigate to http://localhost:6265/auth and click the 'Sign up' link to switch to sign-up mode
-    - expect: Sign-up form is displayed with Name, Email, and Password fields
-  2. Enter 'Test User' in Name, 'test@example.com' in Email, and 'short' (5 characters) in Password, then click 'Sign Up'
-    - expect: The form does not submit
-    - expect: Browser native minlength validation fires (password has minLength=8) preventing submission, or an inline error is shown
-
-#### 1.7. Sign-up form validation — empty name field
-
-**File:** `tests/auth/auth-signup-empty-name.spec.ts`
-
-**Steps:**
-  1. Navigate to http://localhost:6265/auth and switch to sign-up mode
-    - expect: Sign-up form is displayed
-  2. Leave Name blank, enter 'test@example.com' in Email and 'validpassword' in Password, then click 'Sign Up'
-    - expect: The form does not submit because the Name field is required
-    - expect: Browser native validation or an inline error prevents the action
-
-#### 1.8. Sign-up with existing email shows error
-
-**File:** `tests/auth/auth-signup-duplicate-email.spec.ts`
-
-**Steps:**
-  1. Navigate to http://localhost:6265/auth and switch to sign-up mode
-    - expect: Sign-up form is displayed
-  2. Enter 'Existing User' in Name, an already-registered email in Email, and a valid password with at least 8 characters in Password, then click 'Sign Up'
-    - expect: An error message is displayed indicating the email is already in use or sign-up failed
-    - expect: The user remains on the /auth page
-
-#### 1.9. Loading state is displayed during sign-in submission
+#### 1.5. Loading state is displayed during sign-in submission
 
 **File:** `tests/auth/auth-signin-loading-state.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
+  1. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: false, legacyEmailLoginEnabled: false }` and delay `POST /api/auth/sign-in/username`
+  2. Navigate to http://localhost:6265/auth
     - expect: Sign-in form is displayed with the 'Sign In' button
-  2. Enter any email and password, then click 'Sign In'
+  3. Enter a username and password, then click 'Sign In'
     - expect: The submit button immediately changes its text to '...' and becomes disabled while the request is in flight
     - expect: The button re-enables (with the original label or with an error) once the response arrives
 
-#### 1.10. GitHub OAuth button is present and interactive
+#### 1.6. Legacy email one-time login and username confirmation gate
 
-**File:** `tests/auth/auth-github-oauth-button.spec.ts`
-
-**Steps:**
-  1. Navigate to http://localhost:6265/auth
-    - expect: The 'Continue with GitHub' button is visible with the GitHub SVG icon
-  2. Observe the button; note it is clickable (not disabled)
-    - expect: The button is not disabled and triggers a navigation to GitHub OAuth when clicked (or initiates the OAuth flow — the exact redirect to GitHub is acceptable as a test result)
-
-#### 1.11. Error is cleared when switching auth modes
-
-**File:** `tests/auth/auth-error-clears-on-mode-switch.spec.ts`
+**File:** `tests/auth/auth-legacy-username-confirm.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:6265/auth
-    - expect: Sign-in form is displayed
-  2. Attempt to sign in with 'bad@example.com' and 'badpassword' to produce an error message
-    - expect: An error message is displayed in the form
-  3. Click the 'Sign up' toggle link to switch to sign-up mode
-    - expect: The error message is no longer visible (the component calls setError(null) on mode switch)
+  1. Create an unconfirmed legacy account fixture (`usernameConfirmed = 0`, real email present) in the local D1 database
+  2. Mock `GET /api/auth/bootstrap/status` to `{ registrationOpen: false, legacyEmailLoginEnabled: true }`
+  3. Navigate to http://localhost:6265/auth
+    - expect: The username input placeholder reads 'Username or legacy email'
+  4. Enter the legacy email and password, then click 'Sign In'
+    - expect: Signed in and redirected to `/settings/profile?confirm=1` (confirmation gate)
+    - expect: The confirmation banner and an editable Username field are shown
+  5. Change the username and click 'Confirm username'
+    - expect: The user is redirected into the app; the gate no longer redirects on reload
+  6. For an already-confirmed account, entering the old email at the legacy path
+    - expect: A generic credential error and the user remains on /auth
+    - expect: The same account still signs in with its username
 
-#### 1.12. Auth callback page shows loading state
+#### 1.7. Auth callback page shows loading state
 
-**File:** `tests/auth/auth-callback-loading.spec.ts`
+**File:** `tests/auth/auth-callback-loading.spec.ts` (removed — covered by GitHub bind flow)
 
 **Steps:**
-  1. Navigate directly to http://localhost:6265/auth/callback
-    - expect: The page shows the text 'Signing in...' centered on screen while the session is being resolved
-  2. Wait for the session resolution to complete
-    - expect: The user is redirected either to '/' (if a valid session was found) or back to '/auth' (if no session)
+  - The `/auth/callback` page remains available for post-login GitHub binding.
 
 ### 2. Routing and Navigation Guards
 

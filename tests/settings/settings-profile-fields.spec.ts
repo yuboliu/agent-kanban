@@ -2,19 +2,28 @@
 // section: 5.2 Profile settings fields
 
 import { expect, test } from "@playwright/test";
-import { signUpAndGetBoard } from "../helpers/auth";
+import { signUpAndGetBoard, usernameFromEmail } from "../helpers/auth";
 
 test.describe("Settings Profile", () => {
-  test("shows readonly email and email verification state", async ({ page }) => {
+  test("shows the editable username field with the account username", async ({ page }) => {
     const email = `settings_profile_fields_${Date.now()}@example.com`;
+    const username = usernameFromEmail(email);
     await signUpAndGetBoard(page, email);
 
     await page.goto("/settings/profile");
 
-    const emailInput = page.getByLabel("Email");
-    await expect(emailInput).toHaveValue(email);
-    await expect(emailInput).not.toBeEditable();
-    await expect(page.getByText(/^(Verified|Unverified)$/)).toBeVisible();
+    const usernameInput = page.getByLabel("Username");
+    await expect(usernameInput).toHaveValue(username);
+    await expect(usernameInput).toBeEditable();
+  });
+
+  test("does not expose an email field or email verification state", async ({ page }) => {
+    await signUpAndGetBoard(page, `settings_profile_no_email_${Date.now()}@example.com`);
+
+    await page.goto("/settings/profile");
+
+    await expect(page.getByLabel("Email")).toHaveCount(0);
+    await expect(page.getByText(/Verified|Unverified/i)).toHaveCount(0);
   });
 
   test("does not expose an editable image URL field", async ({ page }) => {

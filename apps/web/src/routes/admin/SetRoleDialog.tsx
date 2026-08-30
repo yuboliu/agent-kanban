@@ -33,7 +33,7 @@ export function SetRoleDialog({ user, open, onClose, onSuccess }: Props) {
           <DialogTitle>Set Role</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-content-tertiary">
-          User: <span className="font-mono text-content-primary">{user.email}</span>
+          User: <span className="font-mono text-content-primary">{user.username ? `@${user.username}` : user.name}</span>
         </p>
         <Select value={role} onValueChange={(v) => v && setRole(v)}>
           <SelectTrigger className="w-full">

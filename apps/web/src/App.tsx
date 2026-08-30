@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useSession } from "./lib/auth-client";
 import { AccountSettingsPage } from "./routes/AccountSettingsPage";
 import { AgentDetailPage } from "./routes/AgentDetailPage";
@@ -7,7 +7,6 @@ import { AgentNewPage } from "./routes/AgentNewPage";
 import { AgentsPage } from "./routes/AgentsPage";
 import { AuthCallbackPage } from "./routes/AuthCallbackPage";
 import { AuthPage } from "./routes/AuthPage";
-import { AuthVerifyPage } from "./routes/AuthVerifyPage";
 import { AdminDashboardPage } from "./routes/admin/AdminDashboardPage";
 import { AdminLayout } from "./routes/admin/AdminLayout";
 import { AdminMachinesPage } from "./routes/admin/AdminMachinesPage";
@@ -27,12 +26,32 @@ import { RepositoriesPage } from "./routes/RepositoriesPage";
 import { SharePage } from "./routes/SharePage";
 import { SkillsPage } from "./routes/SkillsPage";
 
+function isUsernameUnconfirmed(session: unknown): boolean {
+  if (!session) return false;
+  const user = (session as { user?: { usernameConfirmed?: boolean | null } }).user;
+  return user?.usernameConfirmed === false;
+}
+
+function UsernameGate({ children }: { children: React.ReactNode }) {
+  const { data: session, isPending } = useSession();
+  const location = useLocation();
+
+  if (isPending) return null;
+  if (isUsernameUnconfirmed(session) && !location.pathname.startsWith("/settings/profile")) {
+    // Legacy accounts must confirm/change their username before using the app.
+    // The profile page itself is where the confirmation happens, so it is
+    // exempt from the redirect (otherwise it would loop on the same URL).
+    return <Navigate to="/settings/profile?confirm=1" replace />;
+  }
+  return children;
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data: session, isPending } = useSession();
 
   if (isPending) return null;
   if (!session) return <Navigate to="/auth" replace />;
-  return <>{children}</>;
+  return <UsernameGate>{children}</UsernameGate>;
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
@@ -41,7 +60,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (isPending) return null;
   if (!session) return <Navigate to="/auth" replace />;
   if ((session.user as any).role !== "admin") return <Navigate to="/" replace />;
-  return <>{children}</>;
+  return <UsernameGate>{children}</UsernameGate>;
 }
 
 function RootRoute() {
@@ -49,6 +68,7 @@ function RootRoute() {
 
   if (isPending) return null;
   if (!session) return <LandingPage />;
+  if (isUsernameUnconfirmed(session)) return <Navigate to="/settings/profile?confirm=1" replace />;
   return <BoardRedirect />;
 }
 
@@ -58,7 +78,6 @@ export function App() {
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        <Route path="/auth/verify" element={<AuthVerifyPage />} />
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/mock/chat" element={<MockChatPage />} />
         <Route path="/share/:slug" element={<SharePage />} />

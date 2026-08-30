@@ -1,15 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { createUserFixture, signInAsUsername, usernameFromEmail } from "../helpers/auth";
 
 test.describe("Board Page", () => {
   test("Onboarding flow — 2 steps: create board then add machine", async ({ page }) => {
-    await page.goto("/auth");
-    await page.getByRole("button", { name: "Sign up" }).click();
-    await page.locator('input[placeholder="Name"]').fill("New User");
-    await page.locator('input[type="email"]').fill(`onboarding_${Date.now()}@example.com`);
-    await page.locator('input[type="password"]').fill("password123");
-    await page.getByRole("button", { name: "Sign Up" }).click();
+    const email = `onboarding_${Date.now()}@example.com`;
+    const username = usernameFromEmail(email);
+    await createUserFixture({ email, name: "New User", username, password: "password123" });
+    await signInAsUsername(page, username, "password123");
 
-    await page.waitForURL(/\/boards\/_new/);
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "Skip demo" }).click();
+    await expect(page).toHaveURL(/\/boards\/new/);
 
     // expect: Onboarding heading and tagline
     await expect(page.getByRole("heading", { name: "Agent Kanban" })).toBeVisible();

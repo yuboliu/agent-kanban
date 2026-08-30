@@ -3,7 +3,6 @@ import type { Session, User } from "better-auth";
 export interface Env {
   DB: D1Database;
   AE: AnalyticsEngineDataset;
-  EMAIL: SendEmail;
   TUNNEL_RELAY: DurableObjectNamespace;
   ASSETS: Fetcher;
   AUTH_SECRET: string;
