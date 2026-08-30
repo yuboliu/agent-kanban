@@ -19,7 +19,6 @@ import {
   upsertInstallation,
 } from "./githubInstallations";
 import { createLogger } from "./logger";
-import { ensureMaintainerHttpTriggerSerial } from "./maintainerTriggerConcurrency";
 import { cancelTask, completeTask, getTask } from "./taskRepo";
 import type { AppServices } from "./types";
 
@@ -148,7 +147,6 @@ export async function handleGithubMaintainerEvent(
   const processed: string[] = [];
   for (const maintainer of maintainers) {
     if (!maintainer.ama_http_trigger_id) continue;
-    await ensureMaintainerHttpTriggerSerial(db, env, maintainer);
     const projectId = await getAmaProjectId(db, maintainer.owner_id);
     if (!projectId) {
       throw new Error(`No AMA project for maintainer owner ${maintainer.owner_id}`);

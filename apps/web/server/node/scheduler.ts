@@ -1,6 +1,5 @@
 import { createLogger } from "../logger";
 import { detectStaleMachines } from "../machineRepo";
-import { backfillMaintainerHttpTriggerConcurrency } from "../maintainerTriggerConcurrency";
 import { detectAndReleaseStaleAll } from "../taskStale";
 import type { AppServices } from "../types";
 
@@ -21,9 +20,6 @@ export function startScheduler(services: AppServices, options?: { intervalMs?: n
     running = true;
     try {
       await detectStaleMachines(services.DB).catch((err) => logger.warn(`detectStaleMachines failed: ${err}`));
-      await backfillMaintainerHttpTriggerConcurrency(services.DB, services).catch((err) =>
-        logger.warn(`backfillMaintainerHttpTriggerConcurrency failed: ${err}`),
-      );
       // Local-only: task dispatch happens on the daemon side via polling; the
       // server only releases tasks whose sessions went stale.
       await detectAndReleaseStaleAll(services.DB, services).catch((err) => logger.warn(`detectAndReleaseStaleAll failed: ${err}`));

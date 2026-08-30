@@ -2,7 +2,6 @@ export { TunnelRelay } from "../server/tunnelRelay";
 
 import { createLogger } from "../server/logger";
 import { detectStaleMachines } from "../server/machineRepo";
-import { backfillMaintainerHttpTriggerConcurrency } from "../server/maintainerTriggerConcurrency";
 import { createApi } from "../server/routes";
 import { detectAndReleaseStaleAll } from "../server/taskStale";
 import type { AppServices, Env, RelayId } from "../server/types";
@@ -41,9 +40,6 @@ export default {
     ctx.waitUntil(
       Promise.all([
         detectStaleMachines(services.DB).catch((err) => logger.warn(`detectStaleMachines failed: ${err}`)),
-        backfillMaintainerHttpTriggerConcurrency(services.DB, services).catch((err) =>
-          logger.warn(`backfillMaintainerHttpTriggerConcurrency failed: ${err}`),
-        ),
         // Local-only: task dispatch happens on the daemon side via polling;
         // the server only releases tasks whose sessions went stale.
         detectAndReleaseStaleAll(services.DB, services).catch((err) => logger.warn(`detectAndReleaseStaleAll failed: ${err}`)),
