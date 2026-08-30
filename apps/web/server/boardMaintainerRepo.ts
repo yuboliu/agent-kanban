@@ -7,8 +7,11 @@ export interface BoardMaintainer {
   agent_id: string;
   prompt: string;
   interval_seconds: number;
+  runtime: string;
+  model: string | null;
   heartbeat_enabled: boolean;
   review_enabled: boolean;
+  github_events_enabled: boolean;
   status: "active" | "paused" | "archived";
   last_run_at: string | null;
   last_error_message: string | null;
@@ -23,8 +26,11 @@ export interface CreateBoardMaintainerInput {
   agentId: string;
   prompt: string;
   intervalSeconds: number;
+  runtime: string;
+  model?: string | null;
   heartbeatEnabled: boolean;
   reviewEnabled: boolean;
+  githubEventsEnabled?: boolean;
   status: "active" | "paused";
   apiKeyId?: string | null;
 }
@@ -32,14 +38,18 @@ export interface CreateBoardMaintainerInput {
 export interface UpdateBoardMaintainerInput {
   prompt?: string;
   intervalSeconds?: number;
+  runtime?: string;
+  model?: string | null;
   heartbeatEnabled?: boolean;
   reviewEnabled?: boolean;
+  githubEventsEnabled?: boolean;
   status?: "active" | "paused" | "archived";
 }
 
-type BoardMaintainerRow = Omit<BoardMaintainer, "heartbeat_enabled" | "review_enabled"> & {
+type BoardMaintainerRow = Omit<BoardMaintainer, "heartbeat_enabled" | "review_enabled" | "github_events_enabled"> & {
   heartbeat_enabled: number;
   review_enabled: number;
+  github_events_enabled: number;
 };
 
 function mapBoardMaintainer(row: BoardMaintainerRow): BoardMaintainer {
@@ -47,6 +57,7 @@ function mapBoardMaintainer(row: BoardMaintainerRow): BoardMaintainer {
     ...row,
     heartbeat_enabled: row.heartbeat_enabled === 1,
     review_enabled: row.review_enabled === 1,
+    github_events_enabled: row.github_events_enabled === 1,
   };
 }
 
@@ -61,9 +72,9 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
     .prepare(
       `INSERT INTO board_maintainers (
         id, owner_id, board_id, agent_id,
-        prompt, interval_seconds, heartbeat_enabled, review_enabled, status, api_key_id, created_at, updated_at
+        prompt, interval_seconds, runtime, model, heartbeat_enabled, review_enabled, github_events_enabled, status, api_key_id, created_at, updated_at
       )
-      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE EXISTS (
         SELECT 1 FROM board_maintainer_claims
         WHERE owner_id = ? AND board_id = ? AND maintainer_id = ?
@@ -76,8 +87,11 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
       input.agentId,
       input.prompt,
       input.intervalSeconds,
+      input.runtime,
+      input.model ?? null,
       input.heartbeatEnabled ? 1 : 0,
       input.reviewEnabled ? 1 : 0,
+      input.githubEventsEnabled ? 1 : 0,
       input.status,
       input.apiKeyId ?? null,
       now,
@@ -173,6 +187,14 @@ export async function updateBoardMaintainer(
     sets.push("interval_seconds = ?");
     values.push(updates.intervalSeconds);
   }
+  if (updates.runtime !== undefined) {
+    sets.push("runtime = ?");
+    values.push(updates.runtime);
+  }
+  if (updates.model !== undefined) {
+    sets.push("model = ?");
+    values.push(updates.model);
+  }
   if (updates.heartbeatEnabled !== undefined) {
     sets.push("heartbeat_enabled = ?");
     values.push(updates.heartbeatEnabled ? 1 : 0);
@@ -180,6 +202,10 @@ export async function updateBoardMaintainer(
   if (updates.reviewEnabled !== undefined) {
     sets.push("review_enabled = ?");
     values.push(updates.reviewEnabled ? 1 : 0);
+  }
+  if (updates.githubEventsEnabled !== undefined) {
+    sets.push("github_events_enabled = ?");
+    values.push(updates.githubEventsEnabled ? 1 : 0);
   }
   if (updates.status !== undefined) {
     sets.push("status = ?");

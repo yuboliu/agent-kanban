@@ -342,9 +342,10 @@ describe("maintainer routes trigger contracts", () => {
   });
 
   it("uses the canonical maintainer skill while recognizing legacy agents", () => {
-    expect(routes).toContain('const AK_MAINTAINER_SKILL_REF = "ak@ak-maintainer"');
-    expect(routes).toContain('const LEGACY_AK_MAINTAINER_SKILL_REF = "saltbo/agent-kanban@ak-maintainer"');
-    expect(routes).toContain("skill === AK_MAINTAINER_SKILL_REF || skill === LEGACY_AK_MAINTAINER_SKILL_REF");
+    const maintainerAgent = readFileSync(new URL("../apps/web/server/maintainerAgent.ts", import.meta.url), "utf8");
+    expect(maintainerAgent).toContain('AK_MAINTAINER_SKILL_REF = "ak@ak-maintainer"');
+    expect(maintainerAgent).toContain('LEGACY_AK_MAINTAINER_SKILL_REF = "saltbo/agent-kanban@ak-maintainer"');
+    expect(maintainerAgent).toContain("skill === AK_MAINTAINER_SKILL_REF || skill === LEGACY_AK_MAINTAINER_SKILL_REF");
   });
 });
 

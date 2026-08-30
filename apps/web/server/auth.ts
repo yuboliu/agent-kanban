@@ -68,6 +68,10 @@ const ROUTE_RULES: { method: string; pattern: RegExp; rule: RouteRule }[] = [
   { method: "DELETE", pattern: /^\/api\/boards\/[^/]+$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/local-runs$/, rule: { allow: ["machine"] } },
+  { method: "POST", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/claim$/, rule: { allow: ["machine"] } },
+  { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/lease$/, rule: { allow: ["machine"] } },
+  { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/complete$/, rule: { allow: ["machine"] } },
+  { method: "PATCH", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/runs\/[^/]+\/fail$/, rule: { allow: ["machine"] } },
   { method: "GET", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/variables$/, rule: { allow: ["user", "agent:leader"] } },
   { method: "PUT", pattern: /^\/api\/boards\/[^/]+\/maintainers\/[^/]+\/variables$/, rule: { allow: ["user", "agent:leader"] } },
   {

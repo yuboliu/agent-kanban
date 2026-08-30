@@ -111,6 +111,16 @@ import {
   upsertMachine,
 } from "./machineRepo";
 import { createMailbox, deleteMailbox, getEmail, getInbox } from "./mailsService";
+import { ensureLocalMaintainerAgent, isMaintainerAgentProfile } from "./maintainerAgent";
+import {
+  claimNextMaintainerRun,
+  completeMaintainerRun,
+  failMaintainerRun,
+  listMaintainerMemories,
+  listMaintainerRuns,
+  listMaintainerSessions,
+  renewMaintainerRunLease,
+} from "./maintainerRuntimeRepo";
 import { createMessage, listMessages } from "./messageRepo";
 import { metricsMiddleware } from "./metrics";
 import { getMachineMetrics } from "./metricsRepo";
@@ -1888,14 +1898,15 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   const ownerId = c.get("ownerId");
   const boardId = c.req.param("id");
   const body = await c.req.json<{
-    agent_id?: string;
+    agent_id?: string; // ignored for backward compatibility; the tenant built-in agent is always used
+    runtime?: string;
+    model?: string | null;
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
+    github_events_enabled?: boolean;
     status?: "active" | "paused";
   }>();
-  const maintainerAgentId = body.agent_id;
-  if (!maintainerAgentId) throw new HTTPException(400, { message: "agent_id is required" });
   const intervalSeconds = body.interval_seconds ?? MAINTAINER_HEARTBEAT_DEFAULT_INTERVAL_SECONDS;
   validateMaintainerHeartbeatInterval(intervalSeconds);
   validateMaintainerHeartbeatEnabled(body.heartbeat_enabled);
@@ -1907,6 +1918,12 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   const heartbeatEnabled = body.heartbeat_enabled ?? true;
   const reviewEnabled = body.review_enabled ?? true;
   validateMaintainerTriggerModes(heartbeatEnabled, reviewEnabled);
+  if (body.runtime !== undefined && !AGENT_RUNTIMES.includes(body.runtime as AgentRuntime)) {
+    throw new HTTPException(400, { message: `runtime must be one of: ${AGENT_RUNTIMES.join(", ")}` });
+  }
+  if (body.github_events_enabled !== undefined && typeof body.github_events_enabled !== "boolean") {
+    throw new HTTPException(400, { message: "github_events_enabled must be a boolean" });
+  }
 
   const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
   if (!board) throw new HTTPException(404, { message: "Board not found" });
@@ -1921,9 +1938,10 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   let maintainerPersisted = false;
 
   try {
-    // Local trigger configuration is persisted in D1. The scheduler embedded
-    // in `ak start` discovers the row automatically.
-    const maintainerAgent = await ensureLocalMaintainerAgentProfile(c.env.DB, ownerId, maintainerAgentId);
+    // Stage 4: every board maintainer binds the tenant built-in Local
+    // Maintainer agent. Per-board runtime/model and trigger flags live on the
+    // board_maintainers row; the scheduler embedded in `ak start` discovers it.
+    const maintainerAgent = await ensureLocalMaintainerAgent(c.env.DB, ownerId);
     const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
       id: maintainerId,
       boardId,
@@ -1932,6 +1950,9 @@ api.post("/api/boards/:id/maintainers", async (c) => {
       intervalSeconds,
       heartbeatEnabled,
       reviewEnabled,
+      githubEventsEnabled: body.github_events_enabled ?? false,
+      runtime: (body.runtime as AgentRuntime) ?? maintainerAgent.runtime,
+      model: body.model ?? maintainerAgent.model,
       status: maintainerStatus,
       apiKeyId: null,
     });
@@ -2097,9 +2118,12 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
   const body = await c.req.json<{
+    runtime?: string;
+    model?: string | null;
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
+    github_events_enabled?: boolean;
     status?: "active" | "paused";
   }>();
   if (body.interval_seconds !== undefined) validateMaintainerHeartbeatInterval(body.interval_seconds);
@@ -2108,14 +2132,23 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   if (body.status !== undefined && body.status !== "active" && body.status !== "paused") {
     throw new HTTPException(400, { message: "status must be active or paused" });
   }
+  if (body.runtime !== undefined && !AGENT_RUNTIMES.includes(body.runtime as AgentRuntime)) {
+    throw new HTTPException(400, { message: `runtime must be one of: ${AGENT_RUNTIMES.join(", ")}` });
+  }
+  if (body.github_events_enabled !== undefined && typeof body.github_events_enabled !== "boolean") {
+    throw new HTTPException(400, { message: "github_events_enabled must be a boolean" });
+  }
   const nextHeartbeatEnabled = body.heartbeat_enabled ?? maintainer.heartbeat_enabled;
   const nextReviewEnabled = body.review_enabled ?? maintainer.review_enabled;
   validateMaintainerTriggerModes(nextHeartbeatEnabled, nextReviewEnabled);
   // Local maintainer: D1 stores the trigger modes; `ak start` applies them.
   const updated = await updateBoardMaintainer(c.env.DB, ownerId, boardId, maintainer.id, {
+    runtime: body.runtime,
+    model: body.model,
     intervalSeconds: body.interval_seconds,
     heartbeatEnabled: body.heartbeat_enabled,
     reviewEnabled: body.review_enabled,
+    githubEventsEnabled: body.github_events_enabled,
     status: body.status,
   });
   if (!updated) throw new HTTPException(404, { message: "Board maintainer not found" });
@@ -2129,9 +2162,79 @@ api.get("/api/boards/:id/maintainers/:maintainerId/runs", async (c) => {
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
   const limit = Number.parseInt(c.req.query("limit") ?? "20", 10);
   const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 20;
-  // Local maintainer: runs live in board tasks, not a remote runtime — nothing
-  // to list here.
-  return c.json({ data: [], pagination: { limit: normalizedLimit, hasMore: false } });
+  const runs = await listMaintainerRuns(c.env.DB, ownerId, boardId, maintainer.id, normalizedLimit);
+  return c.json({ data: runs, pagination: { limit: normalizedLimit, hasMore: runs.length === normalizedLimit } });
+});
+
+api.get("/api/boards/:id/maintainers/:maintainerId/sessions", async (c) => {
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const sessions = await listMaintainerSessions(c.env.DB, ownerId, boardId, maintainer.id);
+  return c.json({ data: sessions });
+});
+
+api.get("/api/boards/:id/maintainers/:maintainerId/memories", async (c) => {
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const memories = await listMaintainerMemories(c.env.DB, ownerId, boardId, maintainer.id);
+  return c.json({ data: memories });
+});
+
+// ─── Machine-only maintainer run control (stage 4) ─────────────────────────────
+// The local daemon claims a queued run, renews its lease, and completes/fails it.
+// Single-turn serialization per maintainer happens atomically in claim.
+
+function requireMachineMaintainerContext(c: { get: (key: string) => any }) {
+  if (c.get("identityType") !== "machine") throw new HTTPException(403, { message: "Machine authentication required" });
+  const machineId = c.get("machineId");
+  if (!machineId) throw new HTTPException(403, { message: "Machine context required" });
+  return machineId as string;
+}
+
+api.post("/api/boards/:id/maintainers/:maintainerId/runs/claim", async (c) => {
+  const machineId = requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const run = await claimNextMaintainerRun(c.env.DB, ownerId, boardId, maintainer.id, machineId);
+  return c.json(run ? { run } : { run: null });
+});
+
+api.patch("/api/boards/:id/maintainers/:maintainerId/runs/:runId/lease", async (c) => {
+  const machineId = requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const ok = await renewMaintainerRunLease(c.env.DB, c.req.param("runId"), machineId);
+  return c.json({ ok });
+});
+
+api.patch("/api/boards/:id/maintainers/:maintainerId/runs/:runId/complete", async (c) => {
+  const machineId = requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const body = (await c.req.json<{ session_id?: string | null }>().catch(() => null)) ?? {};
+  const ok = await completeMaintainerRun(c.env.DB, c.req.param("runId"), machineId, body.session_id ?? null);
+  return c.json({ ok });
+});
+
+api.patch("/api/boards/:id/maintainers/:maintainerId/runs/:runId/fail", async (c) => {
+  const machineId = requireMachineMaintainerContext(c);
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  const body = (await c.req.json<{ error?: string }>().catch(() => null)) ?? {};
+  const ok = await failMaintainerRun(c.env.DB, c.req.param("runId"), machineId, body.error ?? "maintainer run failed");
+  return c.json({ ok });
 });
 
 api.delete("/api/boards/:id/maintainers/:maintainerId", async (c) => {
@@ -2186,58 +2289,6 @@ api.delete("/api/boards/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-const AK_MAINTAINER_SKILL_REF = "ak@ak-maintainer";
-const LEGACY_AK_MAINTAINER_SKILL_REF = "saltbo/agent-kanban@ak-maintainer";
-const AK_MAINTAINER_TAINT: AgentTaint = { key: MAINTAINER_TAINT_KEY, value: "board-maintainer", effect: "NoSchedule" };
-
-function sameTaint(a: AgentTaint, b: AgentTaint): boolean {
-  return a.key === b.key && a.effect === b.effect && (a.value ?? null) === (b.value ?? null);
-}
-
-function _withMaintainerTaint(taints: AgentTaint[] | null | undefined): AgentTaint[] {
-  const current = taints ?? [];
-  return current.some((taint) => sameTaint(taint, AK_MAINTAINER_TAINT)) ? current : [...current, AK_MAINTAINER_TAINT];
-}
-
-function withoutMaintainerTaint(taints: AgentTaint[] | null | undefined): AgentTaint[] {
-  return (taints ?? []).filter((taint) => !sameTaint(taint, AK_MAINTAINER_TAINT));
-}
-
-function withMaintainerSkill(skills: string[] | null | undefined): string[] {
-  return [...new Set([...(skills ?? []), AK_MAINTAINER_SKILL_REF])];
-}
-
-function isMaintainerAgentProfile(agent: { kind: string; role?: string | null; skills?: string[] | null; taints?: AgentTaint[] | null }) {
-  return (
-    agent.kind === "worker" &&
-    (agent.role === "board-maintainer" ||
-      (agent.skills ?? []).some((skill) => skill === AK_MAINTAINER_SKILL_REF || skill === LEGACY_AK_MAINTAINER_SKILL_REF) ||
-      (agent.taints ?? []).some((taint) => sameTaint(taint, AK_MAINTAINER_TAINT)))
-  );
-}
-
-// Local (non-AMA) variant: same validation and maintainer skill, but no
-// NoSchedule taint. The taint exists to keep AMA maintainers off legacy local
-// scheduling; a local maintainer MUST stay schedulable or the daemon can never
-// dispatch it (schedulable=false forever). An agent previously wired as an AMA
-// maintainer may carry the taint already — strip it so the local daemon can
-// schedule the agent again.
-async function ensureLocalMaintainerAgentProfile(db: D1, ownerId: string, agentId: string) {
-  const agent = await getAgent(db, agentId, ownerId);
-  if (!agent) throw new HTTPException(404, { message: "Agent not found" });
-  if (agent.kind !== "worker") throw new HTTPException(400, { message: "Board maintainers must use worker agents" });
-  if (!isMaintainerAgentProfile(agent)) {
-    throw new HTTPException(400, { message: "Board maintainers must use a maintainer agent" });
-  }
-  const skills = withMaintainerSkill(agent.skills);
-  const taints = withoutMaintainerTaint(agent.taints);
-  if (JSON.stringify(skills) === JSON.stringify(agent.skills ?? []) && JSON.stringify(taints) === JSON.stringify(agent.taints ?? [])) {
-    return agent;
-  }
-  const updated = await updateAgent(db, agent.id, { skills, taints });
-  if (!updated) throw new HTTPException(404, { message: "Agent not found" });
-  return updated;
-}
 // ─── Admin ───
 
 function requireAdmin(c: { get: (key: string) => any }) {
