@@ -106,7 +106,13 @@ export async function completeMaintainerRun(db: D1, runId: string, machineId: st
     )
     .bind(now, sessionId, runId, machineId)
     .run();
-  return (result.meta?.changes ?? 0) > 0;
+  if ((result.meta?.changes ?? 0) === 0) return false;
+  // GitHub-subject runs extend/reuse the subject session for context continuity.
+  const run = await getMaintainerRun(db, runId);
+  if (run?.routing_key) {
+    await openMaintainerSession(db, run.owner_id, run.board_id, run.maintainer_id, run.routing_key, machineId);
+  }
+  return true;
 }
 
 export async function failMaintainerRun(db: D1, runId: string, machineId: string, error: string): Promise<boolean> {

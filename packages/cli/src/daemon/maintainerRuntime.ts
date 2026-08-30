@@ -15,6 +15,7 @@ import type { MachineClient } from "../client/machine.js";
 import { createLogger } from "../logger.js";
 import { getProvider, normalizeRuntime } from "../providers/registry.js";
 import type { AgentEvent } from "../providers/types.js";
+import { materializeSkillSnapshots, prepareSkillSnapshots } from "../workspace/skills.js";
 
 const LEASE_RENEW_INTERVAL_MS = 20_000;
 const MAX_RUN_DURATION_MS = 30 * 60_000;
@@ -135,6 +136,12 @@ export class LocalMaintainerRuntime {
           .join("\n"),
         "utf8",
       );
+
+      // Fixed built-in skill snapshot (last-known-good via the machine cache).
+      const skillSnapshots = await prepareSkillSnapshots(["ak@ak-maintainer"], this.client);
+      if (skillSnapshots && !materializeSkillSnapshots(cwd, skillSnapshots)) {
+        throw new Error("ak-maintainer skill materialization failed");
+      }
 
       const env: Record<string, string> = {
         ...process.env,

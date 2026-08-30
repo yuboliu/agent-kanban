@@ -11,7 +11,7 @@
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
 | 2 | 纯 Node 运行时 | ✅ 已交付(commit `25354e1` + `58b10a2` + `78e4475`) |
 | 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
-| 4 | Local Maintainer 完整替代 | 🔶 服务端+UI 已交付(commit `5806179`+`503c24f`),CLI 执行面/事件/skill 待续 |
+| 4 | Local Maintainer 完整替代 | 🔶 主要功能已交付(`5806179`+`503c24f`+`1bfa1d8`),事件轮询兜底/memory 回写待续 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
 | 6 | 可选 GitHub App | ✅ 已交付(commit `b34d7b8`) |
 | 7 | 导入旧 Wrangler/D1 数据 | ✅ 已交付(commit `753cb7f`) |
@@ -99,36 +99,39 @@
 (`pnpm dev` = Node API 8787 + Vite 6265 proxy;`service_runner.sh` 单进程生产;
 数据迁移 `pnpm local:migrate --from-wrangler`)。
 
-### 阶段 4 当前进度(🔶 进行中)
+### 阶段 4 当前进度(🔶 进行中,已交付主要功能)
 
 **已交付(2026-08-30)**:
-- `5806179` 服务端核心:
-  - 迁移 `0049_local_maintainer_runtime.sql`:board_maintainers 加 `runtime`/`model`/
-    `github_events_enabled`;新表 maintainer_runs/sessions/memories/event_cursors。
-  - `maintainerAgent.ts`:租户级内置 Local Maintainer Agent(username
-    `ak-local-maintainer-<suffix>`,builtin=1 + NoSchedule taint,不可编辑/删除)。
-  - `maintainerRuntimeRepo.ts`:run 原子领取/串行/租约/完成/失败/幂等入队/supersede;
-    session 按 routing_key 复用;memory 带 revision 条件写入。
-  - 服务端 API:create/PATCH 支持 runtime/model/github_events_enabled(agent_id 兼容
-    忽略,恒绑定内置 agent);GET runs/sessions/memories;机器专用
-    `POST runs/claim`、`PATCH runs/:id/lease|complete|fail`。
-- `503c24f` UI:BoardMaintainerDialog 去 agent 选择,改 runtime/model/GitHub 事件开关;
-  MaintainerDetailPage 加 Runtime/GitHub events 指标与 Sessions tab,Activity 改读本地
-  runs(trigger/routing_key/machine/status/error),移除 Variables 面板。
+- `5806179` 服务端核心:迁移 0049(board_maintainers 加 runtime/model/github_events_enabled;
+  maintainer_runs/sessions/memories/event_cursors 表);内置 Local Maintainer Agent
+  (builtin + NoSchedule,不可编辑/删除);run 原子领取/串行/租约/幂等/supersede、session
+  routing_key 复用、memory revision;API(create/PATCH 扩展 + GET runs/sessions/memories +
+  机器 POST runs/claim、PATCH runs/:id/lease|complete|fail)。
+- `503c24f` UI:Dialog 去 agent 选择改 runtime/model/GitHub 事件;DetailPage 加
+  Runtime/GitHub 指标、Sessions tab、Activity 本地 runs;移除 Variables。
+- `1bfa1d8` CLI 执行面 + GitHub 事件:
+  - `LocalMaintainerRuntime`(daemon/maintainerRuntime.ts):机器领取 run → 临时 workspace
+    + CONTEXT.md + `ak@ak-maintainer` skill 快照物化(prepareSkillSnapshots 缓存,内置
+    基线回退)→ 注入 AK_BOARD_ID/AK_MAINTAINER_ID/AK_MAINTAINER_RUN_ID/TRIGGER/ROUTING_KEY
+    → provider.execute 消费事件 → 30s 租约续期(20s 间隔)→ 完成/失败;超时(30min)abort。
+    不创建任务卡/不调 task claim。
+  - `LocalMaintainerScheduler` 主通道:心跳/review 入队 maintainer_runs(幂等 key)+
+    processNextRun 消费;去重改为检查活跃 run(旧 local-runs 端点保留兼容)。
+  - GitHub webhook 事件分发(`handleGithubMaintainerEvent`):issues/issue_comment/
+    pull_request/_review 规范化,按 subject node_id+action 幂等,入队 github run;
+    忽略无关 action;通过 `listGithubEventMaintainersForRepository`(github_events_enabled)
+    匹配维护者;机器 enqueue 端点 `POST .../runs`。
+  - run 完成时按 routing_key 自动复用/更新 maintainer_sessions(上下文延续)。
+  - 测试:CLI maintainer-runtime(4)、scheduler(7)、github-events(4)。
 
-**剩余(CLI 执行面 + 事件 + skill,计划 3.3-3.4)**:
-1. **CLI 执行管线**:把 `daemon/dispatcher.ts` 的 provider 启动/临时 Ed25519 session
-   身份/隔离 HOME/runtime 配置/skill snapshot/限流提取为可复用执行管线,新增
-   `LocalMaintainerRuntime`(不调 task claim/complete/reject):领取 run → 物化
-   ak-maintainer skill + memory → 注入 AK_BOARD_ID/AK_MAINTAINER_ID/AK_MAINTAINER_RUN_ID
-   → 启动 provider → 完成/失败 + memory revision 回写。Session 本地存储加
-   `type: "maintainer"`。
-2. **Scheduler 切换**:`LocalMaintainerScheduler` 从 local-runs 任务卡改为主管道:心跳/
-   review 入队 maintainer_runs + 执行器消费(仍保留旧 local-runs 端点兼容)。
-3. **GitHub 事件**:webhook 规范化/去重 + `maintainer_event_cursors` 轮询兜底
-   (Repository Events API + ETag);issue/PR 会话复用与关闭。
-4. **Skill 本地化**:完整打包 `skills/ak-maintainer/`(SKILL.md + references),每日更新
-   + 快照固定 + last-known-good。
+**剩余(事件轮询兜底,计划 3.4)**:
+1. **`maintainer_event_cursors` 轮询**:无公网 webhook 时,daemon 用 GitHub
+   Repository Events API + ETag 增量补齐 issue/PR 事件(首次只建基线);同一事件
+   webhook 与轮询跨通道去重(幂等键已含 node_id)。
+2. **memory 回写**:首版执行器只写 CONTEXT.md,未做 HEARTBEAT.md 回写与
+   maintainer_memories revision 上传(需要机器写 memory 端点);当前内存持久化靠
+   provider 工作区,跨机器不延续。
+3. **skill 完整打包**:ak-maintainer 的 references/ 目录与每日 24h 刷新机制沿用
+   现有 skill 缓存(prepareSkillSnapshots 已带 last-known-good),未单独做发布物打包。
 
-测试:服务端已覆盖(run 原子领取/串行/租约、sessions 复用、memory revision、UI)。
-CLI 执行面测试待做(计划用 fake provider 验证心跳写 memory、GitHub 事件入独立 run)。
+测试基线:服务端 2435+、CLI 1018、全量约 2450 通过。
