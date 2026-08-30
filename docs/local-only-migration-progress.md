@@ -11,9 +11,9 @@
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
 | 2 | 纯 Node 运行时 | ✅ 已交付(commit `25354e1` + `58b10a2` + `78e4475`) |
 | 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
-| 4 | Local Maintainer 完整替代 | ✅ 核心已交付(`5806179`+`503c24f`+`1bfa1d8`+`b3214c2`),仅事件轮询兜底待续 |
+| 4 | Local Maintainer 完整替代 | ✅ 核心已交付(`5806179`+`503c24f`+`1bfa1d8`+`b3214c2`) |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
-| 6 | 可选 GitHub App | ✅ 已交付(commit `b34d7b8`) |
+| 6 | 平台 GitHub 集成移除(用户决定) | ✅ 已交付(commit `276557e`,webhook/App/OAuth/installations/github_events 全删) |
 | 7 | 导入旧 Wrangler/D1 数据 | ✅ 已交付(commit `753cb7f`) |
 | 8 | 删除 Cloudflare/AMA 构建与文档遗留 | ✅ 已交付(commit `79d9153`) |
 
@@ -99,43 +99,45 @@
 (`pnpm dev` = Node API 8787 + Vite 6265 proxy;`service_runner.sh` 单进程生产;
 数据迁移 `pnpm local:migrate --from-wrangler`)。
 
-### 阶段 4 当前进度(🔶 进行中,已交付主要功能)
+### 阶段 4 已交付(2026-08-30)
 
-**已交付(2026-08-30)**:
-- `5806179` 服务端核心:迁移 0049(board_maintainers 加 runtime/model/github_events_enabled;
-  maintainer_runs/sessions/memories/event_cursors 表);内置 Local Maintainer Agent
-  (builtin + NoSchedule,不可编辑/删除);run 原子领取/串行/租约/幂等/supersede、session
-  routing_key 复用、memory revision;API(create/PATCH 扩展 + GET runs/sessions/memories +
-  机器 POST runs/claim、PATCH runs/:id/lease|complete|fail)。
-- `503c24f` UI:Dialog 去 agent 选择改 runtime/model/GitHub 事件;DetailPage 加
-  Runtime/GitHub 指标、Sessions tab、Activity 本地 runs;移除 Variables。
-- `1bfa1d8` CLI 执行面 + GitHub 事件:
-  - `LocalMaintainerRuntime`(daemon/maintainerRuntime.ts):机器领取 run → 临时 workspace
-    + CONTEXT.md + `ak@ak-maintainer` skill 快照物化(prepareSkillSnapshots 缓存,内置
-    基线回退)→ 注入 AK_BOARD_ID/AK_MAINTAINER_ID/AK_MAINTAINER_RUN_ID/TRIGGER/ROUTING_KEY
-    → provider.execute 消费事件 → 30s 租约续期(20s 间隔)→ 完成/失败;超时(30min)abort。
-    不创建任务卡/不调 task claim。
-  - `LocalMaintainerScheduler` 主通道:心跳/review 入队 maintainer_runs(幂等 key)+
-    processNextRun 消费;去重改为检查活跃 run(旧 local-runs 端点保留兼容)。
-  - GitHub webhook 事件分发(`handleGithubMaintainerEvent`):issues/issue_comment/
-    pull_request/_review 规范化,按 subject node_id+action 幂等,入队 github run;
-    忽略无关 action;通过 `listGithubEventMaintainersForRepository`(github_events_enabled)
-    匹配维护者;机器 enqueue 端点 `POST .../runs`。
-  - run 完成时按 routing_key 自动复用/更新 maintainer_sessions(上下文延续)。
-  - 测试:CLI maintainer-runtime(5)、scheduler(7)、github-events(4)。
-- `b3214c2` memory 持久化闭环:
-  - 服务端 PUT `.../memories`(机器专用):路径安全校验(拒绝绝对/`..`/`.ama`)、1 MiB
-    限制、服务端 SHA-256、revision 条件写入(冲突返回 null);GET 允许 user+machine。
-  - CLI 执行器:运行前 `listMaintainerMemories` 水合到 scratch workspace,运行后扫描
-    变更文件按 `expected_revision` 回写(未变化跳过,冲突记录日志不覆盖)。
-  - 测试:memory 水合+回写(带 revision 断言)。
+- `5806179` 服务端核心:迁移 0049(board_maintainers 加 runtime/model;maintainer_runs/
+  sessions/memories/event_cursors 表);内置 Local Maintainer Agent;run 原子领取/串行/
+  租约/幂等/supersede、session routing_key 复用、memory revision;机器 API(claim/lease/
+  complete/fail)。
+- `503c24f` UI:Dialog 改 runtime/model;DetailPage 加 Runtime 指标、Sessions tab。
+- `1bfa1d8` CLI 执行面:`LocalMaintainerRuntime`(claim → skill 快照 → provider.execute →
+  lease/超时/complete-fail,不创建任务卡);`LocalMaintainerScheduler` 主通道(心跳/review
+  入队 maintainer_runs + 消费);run 完成时 session 复用。
+- `b3214c2` memory 持久化:服务端 PUT memories(路径安全/1MiB/SHA-256/revision);
+  CLI 执行器水合 + 按 revision 回写。
+- `26b918a` skill 全目录打包:builtinSkills 支持 references/agents 多文件,vite+fs 双通道,
+  快照 API 与 CLI install 透传 files。
 
-**剩余(事件轮询兜底,计划 3.4,唯一)**:
-1. **`maintainer_event_cursors` 轮询**:无公网 webhook 时,daemon 用 GitHub
-   Repository Events API + ETag 增量补齐 issue/PR 事件(首次只建基线);同一事件
-   webhook 与轮询跨通道去重(幂等键已含 node_id;表 maintainer_event_cursors 已在
-   迁移 0049 建好,repo 读写未实现)。
-2. **skill 完整打包**:ak-maintainer 的 references/ 目录与每日 24h 刷新沿用现有
-   skill 缓存(prepareSkillSnapshots 已带 last-known-good),未单独做发布物打包。
+### 平台 GitHub 集成移除(用户决策,commit `276557e`,净删约 1900 行)
 
-测试基线:全量约 2445 通过(服务端 + CLI + 前端)。
+- 删:githubWebhook/githubApp/githubInstallations/githubService 模块;webhook/github-app/
+  repositories github-token 端点;betterAuth github OAuth provider;AppServices 的
+  GITHUB_* 字段;维护者 github_events_enabled(含 Dialog/DetailPage/UI 开关);shared 的
+  RepoAppStatus/GithubAppConfig/InstallableRepo;CLI createRepositoryGithubToken/
+  configureGithubAuth/`ak auth git` 铸 token;迁移 0050 删 github_installations 表。
+- **保留**:repositories(本地路径+URL,普通数据)、pr_url、PrMonitor(gh CLI 轮询兜底)、
+  `ak auth git` 改为提示本地 `gh auth login`;worker 用本地 git 凭据推 PR。
+- 相关测试删除/更新;全量 2429 通过。
+
+### 待办:GitHub 自动化界面(用户新需求,参考 ORCA)
+
+用户要求:kanban 平台提供**自动化界面**——定期访问 GitHub,查看提交的 PR 和 issue,
+可设置"PR 合并、issues 处理"关联到指定 agent,当有 PR/issues 时自动执行其中内容。
+
+设计草案(参考 stablyai/orca 的 task/worktree 关联):
+1. 新表 `github_automations`:board_id、repository_id、agent_id、rule(pr_merged/issue_opened/
+   issue_comment 等)、enabled、routing 配置。
+2. daemon 轮询器 `githubAutomation.ts`:复用 gh CLI,定期(如 60s)拉取关联仓库的
+   PR/issues(gh pr list / gh issue list),对比已处理游标,产出事件。
+3. 自动执行:PR merged → 完成关联任务(review_enabled 流程);issues → 为关联 agent 创建
+   任务并 dispatch(或入队 maintainer run)。
+4. UI:自动化界面(仓库/agent/规则配置 + 事件日志),复用 maintainer_runs 展示模式。
+5. `maintainer_event_cursors` 表(迁移 0049 已建)存储仓库轮询 ETag/最新事件。
+
+测试基线:全量约 2429 通过(服务端 + CLI + 前端)。
