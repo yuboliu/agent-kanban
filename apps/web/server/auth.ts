@@ -234,7 +234,7 @@ async function handleAgentIdentity(c: Context<{ Bindings: AppServices }>, identi
      LIMIT 1`,
   )
     .bind(sessionId, sessionId)
-    .first<{ agent_id: string; kind: string; owner_id: string | null; source: "ama" | "legacy" }>();
+    .first<{ agent_id: string; kind: string; owner_id: string | null; source: "legacy" }>();
 
   if (!row) {
     return c.json({ error: { code: "FORBIDDEN", message: "Agent session is not registered" } }, 403);

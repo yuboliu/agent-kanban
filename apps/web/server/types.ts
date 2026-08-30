@@ -66,13 +66,6 @@ export interface AppServices {
   CF_ACCOUNT_ID: string;
   CF_API_TOKEN: string;
   AK_API_URL?: string;
-  AMA_ORIGIN?: string;
-  // OIDC issuer for AMA. Discovery URL is derived from the standard well-known path.
-  AMA_OIDC_ISSUER?: string;
-  AMA_OIDC_CLIENT_ID?: string;
-  AMA_OIDC_CLIENT_SECRET?: string;
-  AMA_OIDC_SCOPES?: string;
-  AMA_RUNNER_VERSION?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
   GITHUB_APP_ID?: string;
   // base64 of the App's PKCS#8 PEM private key
@@ -99,12 +92,6 @@ export interface Env {
   CF_ACCOUNT_ID: string;
   CF_API_TOKEN: string;
   AK_API_URL?: string;
-  AMA_ORIGIN?: string;
-  AMA_OIDC_ISSUER?: string;
-  AMA_OIDC_CLIENT_ID?: string;
-  AMA_OIDC_CLIENT_SECRET?: string;
-  AMA_OIDC_SCOPES?: string;
-  AMA_RUNNER_VERSION?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
@@ -123,7 +110,7 @@ declare module "hono" {
     machineId?: string;
     agentId?: string;
     sessionId?: string;
-    agentRuntimeSource?: "ama" | "legacy";
+    agentRuntimeSource?: "legacy";
     agentCapabilities?: string[];
     user?: User;
     session?: Session;
