@@ -48,6 +48,10 @@
 
 ## 阶段 3 评估(AMA 删除)
 
+- **阶段 3.2 已完成(commit `58dd78b`)**:modelCatalog 只聚合本地机器(删 AMA
+  cloud catalog/runner 模型);删除 maintainerTriggerConcurrency.ts(纯 AMA);
+  worker/node scheduler 不再 backfill trigger 并发;githubWebhook 不再调用
+  ensureMaintainerHttpTriggerSerial。pre-commit 全过。
 - **阶段 3.1 已完成(commit `a79262d`)**:任务分配只检查本地 + 移除 AMA dispatch。
   - runtimeRouter:ama 恒 false,只查本地机器心跳。
   - taskDispatch:删除 dispatchTaskToAma/claim/backoff/prompt/vault/session/teardown/

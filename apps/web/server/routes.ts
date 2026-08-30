@@ -199,8 +199,6 @@ import {
   boardMaintainerScheduleTriggerName,
   createAmaAgentForAkProfile,
   ensureAmaAgentForAkAgent,
-  sendTaskMessageToAma,
-  sendTaskRejectToAma,
   syncAmaAgentForAkProfile,
   USER_VARIABLES_CREDENTIAL_NAME,
 } from "./taskDispatch";
@@ -2387,19 +2385,6 @@ api.post("/api/tasks/:id/reject", async (c) => {
   if (!task) throw new HTTPException(404, { message: "Task not found" });
   const identity = await validateTaskManagementTransition(c, "reject", task);
 
-  try {
-    await sendTaskRejectToAma(c.env.DB, c.env, c.get("ownerId"), task, body.reason);
-  } catch (error) {
-    const status = (error as { status?: unknown }).status;
-    if (status === 404 || status === 409) {
-      const responseText = (error as { responseText?: unknown }).responseText;
-      const message =
-        typeof responseText === "string" && responseText ? responseText : error instanceof Error ? error.message : "AMA reject delivery failed";
-      throw new HTTPException(status, { message });
-    }
-    throw error;
-  }
-
   const rejected = await rejectTask(c.env.DB, task.id, actorType, actorId, identity, body.reason, sessionId);
   if (!rejected) throw new HTTPException(404, { message: "Task not found" });
   return c.json(rejected);
@@ -2415,9 +2400,6 @@ api.post("/api/tasks/:id/notes", async (c) => {
   if (!task) throw new HTTPException(404, { message: "Task not found" });
 
   const { actorType, actorId, sessionId } = resolveActor(c);
-  if (actorType === "agent:leader" && task.status === "in_progress") {
-    await sendTaskMessageToAma(c.env, c.get("ownerId"), task, body.detail);
-  }
   const action = await addTaskAction(c.env.DB, c.req.param("id"), actorType, actorId, "commented", body.detail, sessionId);
   return c.json(action, 201);
 });
@@ -2448,9 +2430,6 @@ api.post("/api/tasks/:id/messages", async (c) => {
   const task = await getTask(c.env.DB, c.req.param("id"), c.get("ownerId"));
   if (!task) throw new HTTPException(404, { message: "Task not found" });
 
-  if (body.sender_type === "user") {
-    await sendTaskMessageToAma(c.env, c.get("ownerId"), task, body.content);
-  }
   const message = await createMessage(c.env.DB, c.req.param("id"), body.sender_type, senderId, body.content);
   return c.json(message, 201);
 });
