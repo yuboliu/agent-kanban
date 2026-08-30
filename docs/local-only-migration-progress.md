@@ -9,13 +9,13 @@
 |---|---|---|
 | 0 | 冻结基线与迁移预检 | ✅ 已交付(commit `0caf692`) |
 | 1 | 平台无关边界(AppDatabase 契约 + SQLite 适配) | ✅ 已交付(commit `4859309`) |
-| 2 | 纯 Node 运行时 | 🔶 核心已交付(commit `25354e1`),scripts/vite 代理待后续 |
+| 2 | 纯 Node 运行时 | ✅ 已交付(commit `25354e1` + `58b10a2` + `78e4475`) |
 | 3 | 删除 AMA 双轨运行时 | ✅ 已交付(见下,commit 至 `d12689c`) |
 | 4 | Local Maintainer 完整替代 | ⏳ 未开始 |
 | 5 | 用户名认证与托管邮箱移除 | ✅ 已交付(commit `420fc61`) |
-| 6 | 可选 GitHub App | ⏳ 未开始 |
-| 7 | 导入旧 Wrangler/D1 数据 | ⏳ 未开始 |
-| 8 | 删除 Cloudflare/AMA 构建与文档遗留 | ⏳ 未开始 |
+| 6 | 可选 GitHub App | ✅ 已交付(commit `b34d7b8`) |
+| 7 | 导入旧 Wrangler/D1 数据 | ✅ 已交付(commit `753cb7f`) |
+| 8 | 删除 Cloudflare/AMA 构建与文档遗留 | ✅ 已交付(commit `79d9153`) |
 
 ## 阶段 1 已完成部分
 
@@ -42,6 +42,12 @@
 - `9dcd4d7` — 阶段 3.4/3.5 routes 全部本地化,删除 amaRuntime/amaOwnerIntegrationRepo/taskDispatch
 - `ff8cd6c` — 阶段 3.6 shared types 移除 AMA 类型与 ama_agent_id
 - `32df9db` — types.ts 移除 AMA env 配置
+- `56befb8`/`faa19c2`/`b266f9c`/`d12689c` — 阶段 3 收尾(CLI/前端/schema/repo/wrangler)
+- `58b10a2` — 阶段 2 收尾:Node 运行时入口(`node/cli.ts`)、本地 migrations(`migrate.ts` + `db:migrate`)、vite 去 cloudflare() 改 proxy、`service_runner.sh` 纯 Node
+- `b34d7b8` — 阶段 6 可选 GitHub App:webhook/repositories 稳定 disabled
+- `753cb7f` — 阶段 7 `pnpm local:migrate --from-wrangler` 导入旧 D1 数据(备份/列交集/AMA 清理/manifest)
+- `79d9153` — 阶段 8 删除 Cloudflare/AMA 构建遗留(worker/wrangler/tunnelRelay/CF metrics/依赖/文档)
+- `78e4475` — dev 启动修复(`pnpm run server` 避开 pnpm 内置 server 命令)
 
 ## 阶段 3 完成情况
 
@@ -89,8 +95,11 @@
 
 ## 后续会话起点
 
-阶段 3 全部完成。下一阶段:**阶段 4(Local Maintainer 完整替代)**,计划见
-`plans/local-maintainer-ama-parity.md`(内置租户级 Agent、maintainer_runs/sessions/
-memories/event_cursors 表、GitHub 事件 webhook+轮询、skill 本地化与每日更新、执行
-管线提取)。复用基础:CLI `LocalMaintainerScheduler`、`POST .../local-runs` 幂等端点、
-`daemon/dispatcher.ts` 执行管线。
+阶段 2/3/6/7/8 全部完成,纯本地运行时已是唯一部署方式
+(`pnpm dev` = Node API 8787 + Vite 6265 proxy;`service_runner.sh` 单进程生产;
+数据迁移 `pnpm local:migrate --from-wrangler`)。剩余唯一阶段:
+**阶段 4(Local Maintainer 完整替代)**,计划见 `plans/local-maintainer-ama-parity.md`
+(内置租户级 Agent、maintainer_runs/sessions/memories/event_cursors 表、GitHub 事件
+webhook+轮询、skill 本地化与每日更新、执行管线提取)。复用基础:CLI
+`LocalMaintainerScheduler`、`POST .../local-runs` 幂等端点、`daemon/dispatcher.ts`
+执行管线。建议起点:数据模型+API 先行或内置 Local Maintainer Agent 先行。
