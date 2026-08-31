@@ -136,6 +136,11 @@ export const api = {
     deleteLabel: (id: string, name: string) => request<any>("DELETE", `/boards/${id}/labels/${encodeURIComponent(name)}`),
     maintainers: (id: string) => request<any[]>("GET", `/boards/${id}/maintainers`),
     getMaintainer: (id: string, maintainerId: string) => request<any>("GET", `/boards/${id}/maintainers/${maintainerId}`),
+    getMaintainerRelayEnv: (id: string, maintainerId: string) =>
+      request<{ env: Record<string, string>; model_map: Record<string, unknown>; model: string | null }>(
+        "GET",
+        `/boards/${id}/maintainers/${maintainerId}/relay-env`,
+      ),
     maintainerVariables: (id: string, maintainerId: string) =>
       request<{ data: { name: string }[]; credential_id: string | null; updated_at: string | null }>(
         "GET",

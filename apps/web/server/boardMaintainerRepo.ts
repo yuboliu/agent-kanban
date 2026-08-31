@@ -9,6 +9,7 @@ export interface BoardMaintainer {
   interval_seconds: number;
   runtime: string;
   model: string | null;
+  relay_id: string | null;
   heartbeat_enabled: boolean;
   review_enabled: boolean;
   status: "active" | "paused" | "archived";
@@ -27,6 +28,8 @@ export interface CreateBoardMaintainerInput {
   intervalSeconds: number;
   runtime: string;
   model?: string | null;
+  relayId?: string | null;
+  reasoningEffort?: string | null;
   heartbeatEnabled: boolean;
   reviewEnabled: boolean;
   status: "active" | "paused";
@@ -38,6 +41,8 @@ export interface UpdateBoardMaintainerInput {
   intervalSeconds?: number;
   runtime?: string;
   model?: string | null;
+  relayId?: string | null;
+  reasoningEffort?: string | null;
   heartbeatEnabled?: boolean;
   reviewEnabled?: boolean;
   status?: "active" | "paused" | "archived";
@@ -67,9 +72,9 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
     .prepare(
       `INSERT INTO board_maintainers (
         id, owner_id, board_id, agent_id,
-        prompt, interval_seconds, runtime, model, heartbeat_enabled, review_enabled, status, api_key_id, created_at, updated_at
+        prompt, interval_seconds, runtime, model, relay_id, heartbeat_enabled, review_enabled, status, api_key_id, created_at, updated_at
       )
-      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE EXISTS (
         SELECT 1 FROM board_maintainer_claims
         WHERE owner_id = ? AND board_id = ? AND maintainer_id = ?
@@ -84,6 +89,7 @@ export async function createBoardMaintainer(db: D1, ownerId: string, input: Crea
       input.intervalSeconds,
       input.runtime,
       input.model ?? null,
+      input.relayId ?? null,
       input.heartbeatEnabled ? 1 : 0,
       input.reviewEnabled ? 1 : 0,
       input.status,
@@ -188,6 +194,14 @@ export async function updateBoardMaintainer(
   if (updates.model !== undefined) {
     sets.push("model = ?");
     values.push(updates.model);
+  }
+  if (updates.relayId !== undefined) {
+    sets.push("relay_id = ?");
+    values.push(updates.relayId);
+  }
+  if (updates.reasoningEffort !== undefined) {
+    sets.push("reasoning_effort = ?");
+    values.push(updates.reasoningEffort);
   }
   if (updates.heartbeatEnabled !== undefined) {
     sets.push("heartbeat_enabled = ?");

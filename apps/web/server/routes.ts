@@ -1,5 +1,6 @@
 import {
   AGENT_RUNTIMES,
+  type Agent,
   type AgentRuntime,
   type AgentTaint,
   type AnyAgentRuntime,
@@ -1847,9 +1848,11 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   const ownerId = c.get("ownerId");
   const boardId = c.req.param("id");
   const body = await c.req.json<{
-    agent_id?: string; // ignored for backward compatibility; the tenant built-in agent is always used
+    agent_id?: string; // optional; falls back to the tenant built-in Local Maintainer agent
     runtime?: string;
     model?: string | null;
+    relay_id?: string | null;
+    reasoning_effort?: string | null;
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
@@ -1883,10 +1886,24 @@ api.post("/api/boards/:id/maintainers", async (c) => {
   let maintainerPersisted = false;
 
   try {
-    // Stage 4: every board maintainer binds the tenant built-in Local
-    // Maintainer agent. Per-board runtime/model and trigger flags live on the
-    // board_maintainers row; the scheduler embedded in `ak start` discovers it.
-    const maintainerAgent = await ensureLocalMaintainerAgent(c.env.DB, ownerId);
+    // Bind the requested agent (when given) to the board, otherwise the
+    // tenant built-in Local Maintainer agent is materialised. The selected
+    // agent must be a maintainer profile (worker + role/skill/taint) so it
+    // can carry the `ak@ak-maintainer` skill and NoSchedule taint.
+    let maintainerAgent: Agent;
+    if (body.agent_id) {
+      const agent = await getAgent(c.env.DB, body.agent_id, ownerId);
+      if (!agent) throw new HTTPException(404, { message: "Agent not found" });
+      if (!isMaintainerAgentProfile(agent)) {
+        throw new HTTPException(400, {
+          message:
+            "Agent is not a maintainer profile (must be a worker with role=board-maintainer, the ak@ak-maintainer skill, or a NoSchedule taint)",
+        });
+      }
+      maintainerAgent = agent;
+    } else {
+      maintainerAgent = await ensureLocalMaintainerAgent(c.env.DB, ownerId);
+    }
     const maintainer = await createBoardMaintainer(c.env.DB, ownerId, {
       id: maintainerId,
       boardId,
@@ -1897,6 +1914,8 @@ api.post("/api/boards/:id/maintainers", async (c) => {
       reviewEnabled,
       runtime: (body.runtime as AgentRuntime) ?? maintainerAgent.runtime,
       model: body.model ?? maintainerAgent.model,
+      relayId: body.relay_id ?? null,
+      reasoningEffort: body.reasoning_effort ?? null,
       status: maintainerStatus,
       apiKeyId: null,
     });
@@ -1925,6 +1944,32 @@ api.get("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
   if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
   return c.json(publicBoardMaintainer(maintainer));
+});
+
+// Relay credentials for a board maintainer. The daemon calls this (machine
+// auth) so LocalMaintainerRuntime can run the maintainer through the bound
+// relay endpoint instead of the machine's global Claude config. Mirrors
+// `GET /api/agents/:id/relay-env`; never leaks the token beyond the daemon.
+api.get("/api/boards/:id/maintainers/:maintainerId/relay-env", async (c) => {
+  const ownerId = c.get("ownerId");
+  const boardId = c.req.param("id");
+  const board = await getOwnedBoard(c.env.DB, ownerId, boardId);
+  if (!board) throw new HTTPException(404, { message: "Board not found" });
+  const maintainer = await getBoardMaintainer(c.env.DB, ownerId, boardId, c.req.param("maintainerId"));
+  if (!maintainer) throw new HTTPException(404, { message: "Board maintainer not found" });
+  c.header("Cache-Control", "no-store");
+  if (!maintainer.relay_id) return c.json({ env: {}, model_map: {}, model: null });
+  const relay = await getRelayEndpoint(c.env.DB, maintainer.relay_id, ownerId);
+  if (!relay) throw new HTTPException(409, { message: "Maintainer relay endpoint no longer exists" });
+  return c.json({
+    env: {
+      ...relayRuntimeEnv(relay),
+      ANTHROPIC_AUTH_TOKEN: relay.token,
+      ...(relay.model ? { ANTHROPIC_MODEL: relay.model } : {}),
+    },
+    model_map: relay.model_map,
+    model: relay.model,
+  });
 });
 
 api.post("/api/boards/:id/maintainers/:maintainerId/local-runs", async (c) => {
@@ -2064,6 +2109,8 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const body = await c.req.json<{
     runtime?: string;
     model?: string | null;
+    relay_id?: string | null;
+    reasoning_effort?: string | null;
     interval_seconds?: number;
     heartbeat_enabled?: boolean;
     review_enabled?: boolean;
@@ -2085,6 +2132,8 @@ api.patch("/api/boards/:id/maintainers/:maintainerId", async (c) => {
   const updated = await updateBoardMaintainer(c.env.DB, ownerId, boardId, maintainer.id, {
     runtime: body.runtime,
     model: body.model,
+    relayId: body.relay_id,
+    reasoningEffort: body.reasoning_effort,
     intervalSeconds: body.interval_seconds,
     heartbeatEnabled: body.heartbeat_enabled,
     reviewEnabled: body.review_enabled,

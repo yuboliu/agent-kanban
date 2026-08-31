@@ -45,7 +45,7 @@ function Hero() {
           Start Building
         </Link>
         <a
-          href="https://github.com/saltbo/agent-kanban"
+          href="https://github.com/yuboliu/agent-kanban"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 border border-border text-content-primary font-semibold text-sm px-5 py-2.5 rounded-lg hover:bg-surface-secondary transition-colors"
@@ -159,7 +159,7 @@ function Footer() {
         </span>
         <nav className="flex items-center gap-6">
           <a
-            href="https://github.com/saltbo/agent-kanban"
+            href="https://github.com/yuboliu/agent-kanban"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-content-tertiary hover:text-content-primary transition-colors"

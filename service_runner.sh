@@ -11,6 +11,8 @@
 # executes tasks) so the whole stack comes up together — including after a
 # reboot via systemd. Controlled by env vars:
 #   AK_LOCAL_START    1 (default) to start it, 0 to skip
+#                     (overridden by --no-local-runner / --local-runner on the
+#                     service_runner.sh CLI)
 #   AK_LOCAL_API_URL  API origin for the runtime (default: http://127.0.0.1:<port>)
 # The runtime uses saved `ak` credentials (non-interactive); set them once with
 # `ak start --api-url <url> --api-key <key>`.
@@ -99,6 +101,11 @@ Usage:
   ./service_runner.sh restart --pull --install --build
                                      # refresh restart: pull latest code,
                                      # reinstall deps, rebuild shared package
+  ./service_runner.sh start --no-local-runner
+                                     # don't auto-start the local Machine
+                                     # runner (default is to start it)
+  ./service_runner.sh start --local-runner
+                                     # force auto-start even when AK_LOCAL_START=0
   ./service_runner.sh --help
 
 The background service runs as a detached process (setsid, its own process
@@ -108,8 +115,9 @@ an flock on .run/service.lock — see the top of this script.
 It serves the whole app (React SPA + Hono API + WebSocket relay) from one
 pure-local Node process, bound to 0.0.0.0 so the board is reachable from other
 hosts on the LAN. No Cloudflare / Wrangler / Miniflare is involved.
-It also starts this machine's local AK runtime once the API is up — set
-AK_LOCAL_START=0 to skip, AK_LOCAL_API_URL to retarget it.
+It also starts this machine's local AK runtime once the API is up — pass
+--no-local-runner (or set AK_LOCAL_START=0) to skip, AK_LOCAL_API_URL to
+retarget it. Default behaviour is to start the local runner.
 
 First run:
   - installs dependencies if node_modules is missing
@@ -204,6 +212,30 @@ port_listening() {
   else
     return 1
   fi
+}
+
+# Human-readable owner of the process listening on $PORT (for diagnostics).
+port_owner() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp 2>/dev/null | awk -v p=":${PORT}$" '$4 ~ p { print $6; exit }'
+  fi
+}
+
+# Whether the local AK Machine runner is actually live. `ak status` always
+# exits 0 regardless of liveness, so we parse its output and probe the PID
+# with kill -0. Returns 0 when alive, 1 otherwise.
+runner_pid() {
+  ak status 2>/dev/null | sed -nE 's/.*PID ([0-9]+).*/\1/p' | head -1
+}
+runner_pid_alive() {
+  local pid
+  pid="$(runner_pid)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Best-effort path to the daemon log (used when the runner fails to come up).
+runner_log() {
+  echo "${XDG_STATE_HOME:-$HOME/.local/state}/agent-kanban/logs/daemon.log"
 }
 
 # ---------------------------------------------------------------------------
@@ -340,23 +372,41 @@ step_local_start() {
   [ "$DO_LOCAL_START" = "1" ] || return 0
   # The UI must be up first: `ak start` registers/heartbeats against this API.
   if ! port_listening; then
-    warn "Skipping local AK runtime — API not listening on $PORT yet."
+    warn "Skipping local AK runner — API not listening on $PORT yet."
     return 0
   fi
   if ! command -v ak >/dev/null 2>&1; then
-    warn "Skipping local AK runtime — \`ak\` CLI not installed (run ./scripts/install-cli.sh)."
+    warn "Skipping local AK runner — \`ak\` CLI not installed (run ./scripts/install-cli.sh)."
     return 0
   fi
-  if ak status >/dev/null 2>&1; then
-    info "Local AK runtime already running."
+  if runner_pid_alive; then
+    info "Local AK runner already running (PID $(runner_pid))."
     return 0
   fi
-  info "Starting local AK runtime against $LOCAL_API_URL (set AK_LOCAL_START=0 to disable, AK_LOCAL_API_URL to retarget)…"
-  if ak local_start --api-url "$LOCAL_API_URL"; then
-    info "Local AK runtime started."
-  else
-    warn "Local AK runtime did not start — board UI is unaffected. Set credentials with \`ak start --api-url $LOCAL_API_URL --api-key <key>\` once, or set AK_LOCAL_START=0 to silence."
+  # Stale daemon.pid from a prior crash would block `ak local_start`. Best-
+  # effort clear: `ak stop` no-ops when nothing is alive.
+  ak stop >/dev/null 2>&1 || true
+  info "Starting local AK runner against $LOCAL_API_URL (set AK_LOCAL_START=0 to disable, AK_LOCAL_API_URL to retarget)…"
+  if ! ak local_start --api-url "$LOCAL_API_URL"; then
+    warn "Local AK runner did not start. Tail of $(runner_log):"
+    tail -n 30 "$(runner_log)" 2>/dev/null >&2 || true
+    warn "Set credentials with \`ak start --api-url $LOCAL_API_URL --api-key <key>\` once, or set AK_LOCAL_START=0 to silence."
+    return 0
   fi
+  # `ak local_start` returned successfully but the runner only reports its PID
+  # to `ak status` after the daemon has sent the ready IPC back to its parent
+  # — a freshly-spawned runner isn't observable for a beat. Wait briefly.
+  local waited=0
+  while [ "$waited" -lt 30 ]; do
+    if runner_pid_alive; then
+      info "Local AK runner started (PID $(runner_pid))."
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  warn "Local AK runner did not become ready within 30s. Tail of $(runner_log):"
+  tail -n 30 "$(runner_log)" 2>/dev/null >&2 || true
 }
 
 step_banner() {
@@ -435,6 +485,14 @@ cmd_start() {
   step_migrate
   step_env
 
+  # A foreign process already owns the port (e.g. a `pnpm dev` vite server or
+  # another service instance on a shared port): refuse up front instead of
+  # spawning a server that dies with EADDRINUSE and then mis-reporting the
+  # foreign listener as our own success ("lock held: no, port listening: yes").
+  if port_listening && ! service_running; then
+    fatal "Port $PORT is already in use by another process ($(port_owner || echo 'unknown')) — stop it first (e.g. \`pnpm dev\` / vite), or pick a free port with --port."
+  fi
+
   mkdir -p "$LOG_DIR"
   {
     printf '\n════════════════════════════════════════════════════════\n'
@@ -450,23 +508,30 @@ cmd_start() {
     bash -c "exec 8>&-; exec '$ROOT/service_runner.sh' run --skip-install --skip-migrate >> '$LOG_FILE' 2>&1" \
     </dev/null &
 
-  # Wait for the port (Node cold start + migration can take a few seconds).
+  # Wait for OUR service (lock held + port). Checking the port alone would
+  # break on iteration 1 when a foreign process already listens on $PORT.
   local waited=0
   while [ "$waited" -lt 30 ]; do
-    if port_listening; then break; fi
+    if service_running && port_listening; then break; fi
     sleep 1
     waited=$((waited + 1))
   done
 
-  step_local_start
   step_banner
   # Require OUR lock, not just any listener: a foreign process on $PORT would
   # otherwise break the wait loop on iteration 1 and print a success message
   # while the spawned `run` is dying on vite's EADDRINUSE.
   if service_running && port_listening; then
     info "Running in background (pid $(service_pid), port $PORT)."
+    # The spawned `run` tried to bring up the local AK runner while the API
+    # was still booting (step_local_start runs before the server listens) and
+    # always bails out. Bring it up now, with the API reachable.
+    step_local_start
   else
     warn "Service spawned but isn't healthy yet (lock held: $(service_running && echo yes || echo no), port $PORT listening: $(port_listening && echo yes || echo no)) — last log lines:"
+    if port_listening && ! service_running; then
+      warn "Port $PORT is listening but is NOT owned by this service — another process holds it: $(port_owner || echo 'unknown'). Stop that process first, then restart."
+    fi
     tail -n 20 "$LOG_FILE" >&2
     exit 1
   fi
@@ -557,6 +622,8 @@ while [ $# -gt 0 ]; do
     --build) DO_BUILD=1; shift ;;
     --skip-install) DO_INSTALL=0; FORCE_INSTALL=0; shift ;;
     --skip-migrate) DO_MIGRATE=0; shift ;;
+    --local-runner) DO_LOCAL_START=1; shift ;;
+    --no-local-runner) DO_LOCAL_START=0; shift ;;
     --help|-h) usage ;;
     *) fatal "unknown option: $1 (try --help)" ;;
   esac

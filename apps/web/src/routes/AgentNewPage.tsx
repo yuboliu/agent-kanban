@@ -11,6 +11,7 @@ import {
   type TemplateIndex,
 } from "@agent-kanban/shared";
 import { useQuery } from "@tanstack/react-query";
+import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AgentIdenticon } from "../components/AgentIdenticon";
@@ -66,6 +67,17 @@ export function AgentNewPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+
+  // Keep the maintainer skill in sync with the toggle so the UI reflects what
+  // will actually be saved (ak@ak-maintainer is auto-attached by the runtime).
+  useEffect(() => {
+    setSkills((prev) => {
+      if (createMaintainer) {
+        return prev.includes("ak@ak-maintainer") ? prev : [...prev, "ak@ak-maintainer"];
+      }
+      return prev.filter((s) => s !== "ak@ak-maintainer");
+    });
+  }, [createMaintainer]);
 
   const existingRoles = [...new Set(agents.map((a) => a.role).filter(Boolean))];
 
@@ -420,7 +432,7 @@ interface FormStepProps {
   reasoningEffort: string;
   setReasoningEffort: (v: string) => void;
   skills: string[];
-  setSkills: (v: string[]) => void;
+  setSkills: Dispatch<SetStateAction<string[]>>;
   createMaintainer: boolean;
   setCreateMaintainer: (v: boolean) => void;
   maintainerBoardId: string;
@@ -483,6 +495,11 @@ function FormStep(props: FormStepProps) {
   const previewColor = agentColor(previewKey);
   const { data: relays = [] } = useQuery({ queryKey: ["relays"], queryFn: () => api.relays.list() });
   const { data: boards = [] } = useQuery({ queryKey: ["boards"], queryFn: () => api.boards.list(), enabled: createMaintainer });
+  const { data: builtinSkills = [] } = useQuery({
+    queryKey: ["skills", "builtin"],
+    queryFn: () => api.skills.listBuiltin(),
+    staleTime: 5 * 60_000,
+  });
   const {
     data: runtimeModels = [],
     isLoading: runtimeModelsLoading,
@@ -723,7 +740,38 @@ function FormStep(props: FormStepProps) {
             </div>
             <div className="space-y-1.5">
               <Label>Skills</Label>
-              <TagInput tags={skills} onChange={setSkills} placeholder="owner/repo[#ref]@skill-name or ak@skill-name" />
+              <TagInput
+                tags={skills}
+                onChange={setSkills}
+                placeholder="owner/repo[#ref]@skill-name or ak@skill-name"
+                locked={createMaintainer ? new Set(["ak@ak-maintainer"]) : undefined}
+              />
+              {builtinSkills.length > 0 && (
+                <div className="pt-1 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-content-tertiary mr-1">Platform skills</span>
+                  {builtinSkills.map((skill) => {
+                    const ref = `ak@${skill.name}`;
+                    const selected = skills.includes(ref);
+                    const lockedByMaintainer = createMaintainer && ref === "ak@ak-maintainer";
+                    return (
+                      <button
+                        key={skill.name}
+                        type="button"
+                        disabled={lockedByMaintainer}
+                        onClick={() => setSkills((prev: string[]) => (selected ? prev.filter((tag: string) => tag !== ref) : [...prev, ref]))}
+                        title={skill.description}
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
+                          selected
+                            ? "bg-accent/10 border-accent/40 text-accent"
+                            : "border-border text-content-secondary hover:bg-surface-tertiary hover:text-content-primary"
+                        } ${lockedByMaintainer ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                      >
+                        ak@{skill.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border border-border bg-surface-secondary p-4 space-y-4">
@@ -908,7 +956,17 @@ function RoleMultiSelect({ selected, onChange, options }: { selected: string[]; 
   );
 }
 
-function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (v: string[]) => void; placeholder: string }) {
+function TagInput({
+  tags,
+  onChange,
+  placeholder,
+  locked,
+}: {
+  tags: string[];
+  onChange: (v: string[]) => void;
+  placeholder: string;
+  locked?: Set<string>;
+}) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -925,7 +983,11 @@ function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (
       e.preventDefault();
       add();
     } else if (e.key === "Backspace" && input === "" && tags.length > 0) {
-      onChange(tags.slice(0, -1));
+      // Pop the last non-locked tag.
+      const idx = [...tags].reverse().findIndex((tag) => !locked?.has(tag));
+      if (idx === -1) return;
+      const removeAt = tags.length - 1 - idx;
+      onChange([...tags.slice(0, removeAt), ...tags.slice(removeAt + 1)]);
     }
   }
 
@@ -934,22 +996,35 @@ function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (
       onClick={() => inputRef.current?.focus()}
       className="flex flex-wrap items-center gap-1.5 rounded-md border border-input px-3 py-1.5 min-h-9 cursor-text shadow-xs focus-within:ring-1 focus-within:ring-ring"
     >
-      {tags.map((tag) => (
-        <span key={tag} className="inline-flex items-center gap-1 bg-secondary text-secondary-foreground font-mono text-xs px-2 py-0.5 rounded">
-          {tag}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onChange(tags.filter((t) => t !== tag));
-            }}
-            className="hover:opacity-70"
+      {tags.map((tag) => {
+        const isLocked = locked?.has(tag);
+        return (
+          <span
+            key={tag}
+            className={`inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded ${
+              isLocked ? "bg-accent/10 text-accent" : "bg-secondary text-secondary-foreground"
+            }`}
+            title={isLocked ? "Auto-attached by a setting above" : undefined}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </span>
-      ))}
+            {tag}
+            {isLocked && <span className="text-[9px] uppercase tracking-wider opacity-70">auto</span>}
+            {!isLocked && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange(tags.filter((t) => t !== tag));
+                }}
+                className="hover:opacity-70"
+                aria-label={`Remove ${tag}`}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </span>
+        );
+      })}
       <input
         ref={inputRef}
         value={input}

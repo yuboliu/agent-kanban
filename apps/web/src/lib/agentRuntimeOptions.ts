@@ -5,7 +5,7 @@ export function relayModels(relay: RelayEndpointConfig | undefined): string[] {
   const options = new Set<string>();
   if (relay.model) options.add(relay.model);
   for (const tier of ["opus", "sonnet", "haiku", "fable"] as const) {
-    const model = relay.model_map[tier]?.model;
+    const model = relay.model_map?.[tier]?.model;
     if (model) options.add(model);
   }
   return [...options];

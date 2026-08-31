@@ -16,6 +16,6 @@ Agent Kanban orchestrates multiple AI coding agents using a leader-worker model.
 ## Links
 
 - Website: https://agent-kanban.dev
-- GitHub: https://github.com/saltbo/agent-kanban
+- GitHub: https://github.com/yuboliu/agent-kanban
 - npm: https://www.npmjs.com/package/agent-kanban
 - Full documentation for LLMs: https://agent-kanban.dev/llms-full.txt

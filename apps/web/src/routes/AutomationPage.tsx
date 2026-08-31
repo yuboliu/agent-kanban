@@ -1,5 +1,5 @@
 import { ExternalLink, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AutomationDialog } from "../components/AutomationDialog";
 import { Header } from "../components/Header";
@@ -88,7 +88,7 @@ export function AutomationPage() {
         <Tabs defaultValue="rules" className="w-full">
           <TabsList>
             <TabsTrigger value="rules">Rules</TabsTrigger>
-            <TabsTrigger value="events" disabled={!selected}>
+            <TabsTrigger value="events" title={!selected ? "Create a rule first to see its events" : undefined}>
               Event Log
             </TabsTrigger>
           </TabsList>
@@ -168,98 +168,107 @@ export function AutomationPage() {
           </TabsContent>
 
           <TabsContent value="events" className="pt-4">
-            <div className="flex items-center gap-3 mb-4">
-              <Select value={selected?.id} onValueChange={(v) => v && setSelectedId(v)}>
-                <SelectTrigger className="w-72">
-                  <SelectValue>{() => selected?.name ?? "Select a rule…"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {automations.map((automation: any) => (
-                    <SelectItem key={automation.id} value={automation.id}>
-                      {automation.name} — {automation.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={eventStatus ?? "all"} onValueChange={(v) => setEventStatus(v && v !== "all" ? v : undefined)}>
-                <SelectTrigger className="w-36">
-                  <SelectValue>{() => (eventStatus ?? "all").toUpperCase()}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">ALL</SelectItem>
-                  <SelectItem value="pending">PENDING</SelectItem>
-                  <SelectItem value="processing">PROCESSING</SelectItem>
-                  <SelectItem value="done">DONE</SelectItem>
-                  <SelectItem value="failed">FAILED</SelectItem>
-                  <SelectItem value="ignored">IGNORED</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="ghost" size="sm" onClick={() => refreshEvents()}>
-                <RefreshCw className="size-3.5 mr-1.5" />
-                Refresh
-              </Button>
-            </div>
-
-            {events.length === 0 ? (
+            {!selected ? (
               <div className="text-center py-16 border border-dashed border-border rounded-xl">
-                <p className="text-content-secondary text-sm">No events recorded yet.</p>
-                <p className="text-xs text-content-tertiary mt-1">The daemon poller records issue/pr events here while it runs.</p>
+                <p className="text-content-secondary text-sm">No rule selected.</p>
+                <p className="text-xs text-content-tertiary mt-1">Create a rule first to start receiving GitHub events.</p>
               </div>
             ) : (
-              <div className="border border-border rounded-xl overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-surface-tertiary text-content-tertiary text-left">
-                      <th className="px-4 py-2.5 font-medium">Time</th>
-                      <th className="px-4 py-2.5 font-medium">Type</th>
-                      <th className="px-4 py-2.5 font-medium">Subject</th>
-                      <th className="px-4 py-2.5 font-medium">Status</th>
-                      <th className="px-4 py-2.5 font-medium">Task</th>
-                      <th className="px-4 py-2.5 font-medium">Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {events.map((event: any) => (
-                      <tr key={event.id} className="border-t border-border/50 hover:bg-surface-tertiary/50">
-                        <td className="px-4 py-2.5 text-content-tertiary font-mono whitespace-nowrap">{formatRelative(event.created_at)}</td>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={`text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded-sm border ${EVENT_TYPE_STYLES[event.event_type] ?? ""}`}
-                          >
-                            {event.event_type}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <a
-                            href={issueUrl(event.subject)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="font-mono text-content-primary hover:text-accent inline-flex items-center gap-1"
-                          >
-                            {event.subject}
-                            <ExternalLink className="size-3 text-content-tertiary" />
-                          </a>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={`text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded-sm ${EVENT_STATUS_STYLES[event.status] ?? ""}`}
-                          >
-                            {event.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          {event.task_id ? (
-                            <span className="font-mono text-content-secondary">{event.task_id}</span>
-                          ) : (
-                            <span className="text-content-tertiary">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-error max-w-[220px] truncate">{event.error ?? ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <Select value={selected?.id} onValueChange={(v) => v && setSelectedId(v)}>
+                    <SelectTrigger className="w-72">
+                      <SelectValue>{() => selected?.name ?? "Select a rule…"}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {automations.map((automation: any) => (
+                        <SelectItem key={automation.id} value={automation.id}>
+                          {automation.name} — {automation.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={eventStatus ?? "all"} onValueChange={(v) => setEventStatus(v && v !== "all" ? v : undefined)}>
+                    <SelectTrigger className="w-36">
+                      <SelectValue>{() => (eventStatus ?? "all").toUpperCase()}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">ALL</SelectItem>
+                      <SelectItem value="pending">PENDING</SelectItem>
+                      <SelectItem value="processing">PROCESSING</SelectItem>
+                      <SelectItem value="done">DONE</SelectItem>
+                      <SelectItem value="failed">FAILED</SelectItem>
+                      <SelectItem value="ignored">IGNORED</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="sm" onClick={() => refreshEvents()}>
+                    <RefreshCw className="size-3.5 mr-1.5" />
+                    Refresh
+                  </Button>
+                </div>
+
+                {events.length === 0 ? (
+                  <div className="text-center py-16 border border-dashed border-border rounded-xl">
+                    <p className="text-content-secondary text-sm">No events recorded yet.</p>
+                    <p className="text-xs text-content-tertiary mt-1">The daemon poller records issue/pr events here while it runs.</p>
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-surface-tertiary text-content-tertiary text-left">
+                          <th className="px-4 py-2.5 font-medium">Time</th>
+                          <th className="px-4 py-2.5 font-medium">Type</th>
+                          <th className="px-4 py-2.5 font-medium">Subject</th>
+                          <th className="px-4 py-2.5 font-medium">Status</th>
+                          <th className="px-4 py-2.5 font-medium">Task</th>
+                          <th className="px-4 py-2.5 font-medium">Error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {events.map((event: any) => (
+                          <tr key={event.id} className="border-t border-border/50 hover:bg-surface-tertiary/50">
+                            <td className="px-4 py-2.5 text-content-tertiary font-mono whitespace-nowrap">{formatRelative(event.created_at)}</td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={`text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded-sm border ${EVENT_TYPE_STYLES[event.event_type] ?? ""}`}
+                              >
+                                {event.event_type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <a
+                                href={issueUrl(event.subject)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-mono text-content-primary hover:text-accent inline-flex items-center gap-1"
+                              >
+                                {event.subject}
+                                <ExternalLink className="size-3 text-content-tertiary" />
+                              </a>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={`text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded-sm ${EVENT_STATUS_STYLES[event.status] ?? ""}`}
+                              >
+                                {event.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {event.task_id ? (
+                                <span className="font-mono text-content-secondary">{event.task_id}</span>
+                              ) : (
+                                <span className="text-content-tertiary">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-error max-w-[220px] truncate">{event.error ?? ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
         </Tabs>

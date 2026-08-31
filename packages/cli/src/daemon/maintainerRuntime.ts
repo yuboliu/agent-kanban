@@ -33,6 +33,8 @@ interface LocalMaintainer {
   board_id: string;
   runtime?: string;
   model?: string | null;
+  relay_id?: string | null;
+  reasoning_effort?: string | null;
   prompt?: string;
 }
 
@@ -161,12 +163,28 @@ export class LocalMaintainerRuntime {
         ...(run.routing_key ? { AK_MAINTAINER_ROUTING_KEY: run.routing_key } : {}),
       };
 
+      // Relay override: run the maintainer through the bound relay endpoint
+      // instead of the machine's global Claude config (ANTHROPIC_BASE_URL /
+      // AUTH_TOKEN / MODEL). Fail-open — a credential hiccup must not stall
+      // the maintainer, the machine's default config still applies.
+      if (maintainer.relay_id) {
+        try {
+          const relayEnv = await this.client.getMaintainerRelayEnv(boardId, maintainer.id);
+          Object.assign(env, relayEnv.env);
+        } catch (error) {
+          this.logger.warn(
+            `Could not load relay env for maintainer ${maintainer.id} (${maintainer.relay_id}): ${error instanceof Error ? error.message : String(error)}; using machine defaults`,
+          );
+        }
+      }
+
       const handle = await provider.execute({
         sessionId,
         cwd,
         env,
         taskContext: `Board: ${boardId}\nMaintainer run: ${run.trigger}\n${run.routing_key ? `Subject: ${run.routing_key}` : ""}`,
         ...(maintainer.model ? { model: maintainer.model } : {}),
+        ...(maintainer.reasoning_effort ? { reasoningEffort: maintainer.reasoning_effort } : {}),
       });
 
       const deadline = Date.now() + this.maxRunDurationMs;

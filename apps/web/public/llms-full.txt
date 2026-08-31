@@ -118,4 +118,4 @@ is optional and only activates when configured.
 
 ## License
 
-MIT — https://github.com/saltbo/agent-kanban
+MIT — https://github.com/yuboliu/agent-kanban

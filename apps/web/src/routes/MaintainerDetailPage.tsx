@@ -57,7 +57,7 @@ export function MaintainerDetailPage() {
   const { sessions, loading: sessionsLoading, refresh: refreshSessions } = useBoardMaintainerSessions(boardId, maintainerId);
   const { memories, loading: memoriesLoading, error: memoriesError, refresh: refreshMemories } = useBoardMaintainerMemories(boardId, maintainerId);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [schedulerDialogOpen, setSchedulerDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   useEffect(() => {
     if (memories.length === 0) {
@@ -101,9 +101,9 @@ export function MaintainerDetailPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setSchedulerDialogOpen(true)}>
+              <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
                 <Pencil className="size-3.5" />
-                Edit triggers
+                Edit maintainer
               </Button>
               <Button variant="outline" size="sm" onClick={refreshAll}>
                 <RefreshCw className="size-3.5" />
@@ -165,9 +165,9 @@ export function MaintainerDetailPage() {
       <BoardMaintainerDialog
         boardId={boardId}
         maintainer={maintainer}
-        open={schedulerDialogOpen}
+        open={editDialogOpen}
         onOpenChange={(open) => {
-          setSchedulerDialogOpen(open);
+          setEditDialogOpen(open);
           if (!open) void refreshMaintainer();
         }}
       />

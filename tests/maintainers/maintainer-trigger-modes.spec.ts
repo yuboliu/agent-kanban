@@ -118,7 +118,7 @@ test.describe("Maintainer trigger modes", () => {
     await expect(page.getByRole("heading", { name: "Board maintainer" })).toBeVisible();
     await expect(page.getByText("local ak start", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Edit triggers" }).click();
+    await page.getByRole("button", { name: "Edit maintainer" }).click();
     let dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("heading", { name: "Edit maintainer" })).toBeVisible();
     await expect(dialog.getByText(/Local schedules use/)).toBeVisible();
@@ -130,7 +130,7 @@ test.describe("Maintainer trigger modes", () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByText("off", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Edit triggers" }).click();
+    await page.getByRole("button", { name: "Edit maintainer" }).click();
     dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("switch", { name: "Review events" })).toBeChecked();
     await expect(dialog.getByRole("switch", { name: "Scheduled heartbeat" })).not.toBeChecked();

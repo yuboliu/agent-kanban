@@ -55,11 +55,11 @@ function makeInstance(): Instance {
   };
 }
 
-function runScript(inst: Instance, args: string[]) {
+function runScript(inst: Instance, args: string[], extraEnv: Record<string, string> = {}) {
   return spawnSync("bash", [inst.script, ...args], {
     encoding: "utf8",
     timeout: TEST_TIMEOUT,
-    env: { ...process.env, AK_PORT: FAKE_PORT },
+    env: { ...process.env, AK_PORT: FAKE_PORT, ...extraEnv },
   });
 }
 
@@ -113,6 +113,32 @@ function pidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+// Spawns a foreign TCP listener on $port (detached), simulating a process that
+// owns the service port without holding the service lock — e.g. a `pnpm dev`
+// vite server. Cleaned up like fake services in afterEach.
+function startFakePortListener(port: number): number {
+  const code = [
+    'const net=require("net");',
+    `const s=net.createServer();`,
+    `s.listen(${port},"0.0.0.0",()=>{});`,
+    `s.on("error",()=>process.exit(1));`,
+    `process.on("SIGTERM",()=>process.exit(0));`,
+    `setInterval(()=>{},1000);`,
+  ].join("");
+  const child = spawn("node", ["-e", code], { stdio: "ignore", detached: true });
+  child.unref();
+  if (child.pid === undefined) throw new Error("failed to spawn fake port listener");
+
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const check = spawnSync("bash", ["-c", `ss -ltn | grep -q ':${port} '`], { stdio: "ignore" });
+    if (check.status === 0) break;
+    spawnSync("sleep", ["0.1"]);
+  }
+  fakePids.push(child.pid);
+  return child.pid;
 }
 
 afterEach(() => {
@@ -228,4 +254,40 @@ describe.skipIf(!canRun)("service_runner.sh singleton lock", () => {
     },
     TEST_TIMEOUT,
   );
+
+  it(
+    "start refuses up front when another process owns the port (e.g. a dev server)",
+    () => {
+      const inst = makeInstance();
+      const pid = startFakePortListener(Number(FAKE_PORT));
+
+      // Skip install/migrate (the tmp copy has no package.json) and redirect
+      // the data dir so step_env never touches the real one.
+      const result = runScript(inst, ["start", "--skip-install", "--skip-migrate"], { AK_DATA_DIR: join(inst.dir, "data") });
+      const out = outputOf(result);
+
+      // Must fail fast with a clear message instead of spawning a server that
+      // dies on EADDRINUSE and mis-reporting the foreign listener as success
+      // ("lock held: no, port listening: yes").
+      expect(result.status).not.toBe(0);
+      expect(out).toContain(`Port ${FAKE_PORT} is already in use`);
+
+      // No service may have been spawned.
+      expect(existsSync(inst.pidFile)).toBe(false);
+
+      // The foreign listener is untouched.
+      expect(pidAlive(pid)).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it("documents the local runner CLI flags in --help", () => {
+    const result = runScript({ dir: "", script: SCRIPT_SRC, lock: "", pidFile: "" }, ["--help"]);
+    const out = outputOf(result);
+    expect(result.status).toBe(0);
+    // The flags are how operators toggle the default behaviour of starting
+    // the local Machine runner alongside the UI.
+    expect(out).toContain("--no-local-runner");
+    expect(out).toContain("--local-runner");
+  });
 });

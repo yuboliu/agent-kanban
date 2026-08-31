@@ -149,6 +149,12 @@ export abstract class ApiClient {
   getAgentRelayAvailability(agentId: string) {
     return this.request<{ availability: RuntimeAvailability | null }>("GET", `/api/agents/${agentId}/relay-availability`);
   }
+  getMaintainerRelayEnv(boardId: string, maintainerId: string) {
+    return this.request<{ env: Record<string, string>; model_map: Record<string, unknown>; model: string | null }>(
+      "GET",
+      `/api/boards/${boardId}/maintainers/${maintainerId}/relay-env`,
+    );
+  }
   getAgentGpgKey(agentId: string) {
     return this.request<{ armored_private_key: string; gpg_subkey_id: string | null }>("GET", `/api/agents/${agentId}/gpg-key`);
   }

@@ -13,7 +13,7 @@ const maintainerDialog = vi.fn();
 vi.mock("../apps/web/src/components/BoardMaintainerDialog", () => ({
   BoardMaintainerDialog: (props: { open: boolean; maintainer: { runtime?: string } }) => {
     maintainerDialog(props);
-    return props.open ? React.createElement("div", { role: "dialog" }, "Trigger settings") : null;
+    return props.open ? React.createElement("div", { role: "dialog" }, "Edit maintainer") : null;
   },
 }));
 
@@ -167,9 +167,9 @@ describe("MaintainerDetailPage", () => {
     renderMaintainerDetail();
 
     expect(screen.getByText("claude")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit triggers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit maintainer" }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("Trigger settings");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Edit maintainer");
     expect(maintainerDialog).toHaveBeenLastCalledWith(
       expect.objectContaining({ open: true, maintainer: expect.objectContaining({ runtime: "claude" }) }),
     );
