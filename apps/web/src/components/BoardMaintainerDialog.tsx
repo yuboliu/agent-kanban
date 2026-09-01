@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useAgents } from "../hooks/useAgents";
 import { useCreateBoardMaintainer, useUpdateBoardMaintainer } from "../hooks/useBoard";
+import { formatAgentOptionLabel } from "../lib/agentDisplay";
 import { effortLabel, includeCurrentModel, reasoningEfforts, relayModels } from "../lib/agentRuntimeOptions";
 import { api } from "../lib/api";
 import { Button } from "./ui/button";
@@ -201,7 +202,7 @@ export function BoardMaintainerDialog({ boardId, maintainer, open, onOpenChange 
                   {workerAgents.map((agent: any) => (
                     <SelectItem key={agent.id} value={agent.id}>
                       <div className="flex flex-col">
-                        <span>{agent.name || agent.username}</span>
+                        <span>{formatAgentOptionLabel(agent, workerAgents)}</span>
                         <span className="text-[10px] text-content-tertiary font-mono">
                           {agent.builtin ? "Built-in maintainer · " : ""}
                           {agent.runtime}

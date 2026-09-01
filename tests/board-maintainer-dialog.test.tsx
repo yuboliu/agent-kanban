@@ -191,4 +191,65 @@ describe("BoardMaintainerDialog", () => {
       });
     });
   });
+
+  it("disambiguates worker agents that share the same name", async () => {
+    agentsList.mockReset();
+    agentsList.mockResolvedValue([
+      {
+        id: "agent-twin-a",
+        name: "Fullstack Developer",
+        username: "fullstack-a",
+        kind: "worker",
+        runtime: "claude",
+        model: "sonnet-1.2",
+      },
+      {
+        id: "agent-twin-b",
+        name: "Fullstack Developer",
+        username: "fullstack-b",
+        kind: "worker",
+        runtime: "codex",
+        model: "gpt-5",
+      },
+      {
+        id: "agent-unique",
+        name: "Quality Goalkeeper",
+        username: "goalkeeper",
+        kind: "worker",
+        runtime: "claude",
+        model: "sonnet-1.2",
+      },
+    ]);
+
+    renderCreate();
+    // Wait for the agent list to resolve and the auto-select effect to run —
+    // Base UI's SelectValue shows "No eligible agents" until the value matches
+    // an item, which only happens after workerAgents has been populated.
+    await waitFor(() => {
+      const trigger = screen.getAllByRole("combobox")[0];
+      expect(trigger).not.toHaveTextContent("No eligible agents");
+    });
+
+    // Base UI's SelectValue copies the matched SelectItem's ItemText into the
+    // trigger, so when the auto-selected first agent has a duplicate-name twin
+    // the trigger should already carry the @username suffix — proving the
+    // SelectItem rendering wired the disambiguated label. We also click the
+    // trigger with the full pointer sequence so the popup mounts, then assert
+    // every option's text.
+    const trigger = screen.getAllByRole("combobox")[0];
+    expect(trigger).toHaveTextContent(/Fullstack Developer/);
+    expect(trigger).toHaveTextContent("@fullstack-a");
+
+    fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
+    fireEvent.mouseDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+
+    const fullstackOptions = await screen.findAllByRole("option", { name: /Fullstack Developer/ });
+    expect(fullstackOptions).toHaveLength(2);
+    expect(fullstackOptions[0]).toHaveTextContent("@fullstack-a");
+    expect(fullstackOptions[1]).toHaveTextContent("@fullstack-b");
+
+    const uniqueOption = screen.getByRole("option", { name: /Quality Goalkeeper/ });
+    expect(uniqueOption).not.toHaveTextContent("@goalkeeper");
+  });
 });
