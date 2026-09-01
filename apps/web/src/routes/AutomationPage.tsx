@@ -137,6 +137,12 @@ export function AutomationPage() {
                               {rule}
                             </span>
                           ))}
+                          <span
+                            className="text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded-sm border bg-sky-500/10 text-sky-300 border-sky-500/30"
+                            title="Polling fallback cadence (no webhook configured). 60s by default."
+                          >
+                            poll · {automation.poll_interval_seconds ?? 60}s
+                          </span>
                           {automation.last_processed_at && (
                             <span className="text-[11px] text-content-tertiary ml-1">Last: {formatRelative(automation.last_processed_at)}</span>
                           )}

@@ -2400,7 +2400,7 @@ api.patch("/api/boards/:id/automations/:automationId", async (c) => {
   const ownerId = c.get("ownerId");
   const automation = await getAutomation(c.env.DB, ownerId, c.req.param("automationId"));
   if (!automation) throw new HTTPException(404, { message: "Automation not found" });
-  const body = await c.req.json<{ name?: string; enabled?: boolean; rules?: string[] }>();
+  const body = await c.req.json<{ name?: string; enabled?: boolean; rules?: string[]; poll_interval_seconds?: number }>();
   const updated = await updateAutomation(c.env.DB, ownerId, automation.id, body);
   return c.json(updated);
 });

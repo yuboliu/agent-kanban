@@ -34,8 +34,14 @@ export function useAutomationEvents(boardId: string | undefined, automationId: s
 export function useCreateAutomation(boardId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name?: string; repository_id: string; agent_id: string; enabled?: boolean; rules?: string[] }) =>
-      api.automations.create(boardId, input),
+    mutationFn: (input: {
+      name?: string;
+      repository_id: string;
+      agent_id: string;
+      enabled?: boolean;
+      rules?: string[];
+      poll_interval_seconds?: number;
+    }) => api.automations.create(boardId, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations", boardId] });
     },
@@ -45,8 +51,13 @@ export function useCreateAutomation(boardId: string) {
 export function useUpdateAutomation(boardId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ automationId, body }: { automationId: string; body: { name?: string; enabled?: boolean; rules?: string[] } }) =>
-      api.automations.update(boardId, automationId, body),
+    mutationFn: ({
+      automationId,
+      body,
+    }: {
+      automationId: string;
+      body: { name?: string; enabled?: boolean; rules?: string[]; poll_interval_seconds?: number };
+    }) => api.automations.update(boardId, automationId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations", boardId] });
     },

@@ -14,8 +14,12 @@ interface ActiveAutomation {
   name: string;
   full_name: string; // owner/repo
   rules_list: string[];
+  poll_interval_seconds: number;
   last_processed_at: string | null;
 }
+
+const POLL_INTERVAL_MIN_SECONDS = 30;
+const POLL_INTERVAL_DEFAULT_SECONDS = 60;
 
 interface AutomationEvent {
   id: string;
@@ -104,6 +108,14 @@ export class GithubAutomationPoller {
 
   private async pollAutomation(automation: ActiveAutomation): Promise<void> {
     const rules = new Set(automation.rules_list);
+    // Per-automation throttle: the global 60s tick is just a "wake up and
+    // decide" cadence. Each rule row enforces its own interval so users can
+    // dial down noise on busy repos without affecting other automations.
+    const intervalSeconds = clampPollInterval(automation.poll_interval_seconds);
+    if (shouldSkipPoll(Date.now(), automation.last_processed_at, intervalSeconds)) {
+      logger.debug(`Skipping automation ${automation.name} until next interval`);
+      return;
+    }
     if (rules.has("issue.opened")) await this.ingestNewIssues(automation);
     if (rules.has("issue.replied") || rules.has("pr.merged")) {
       await this.replyOnOpenPrs(automation);
@@ -228,4 +240,18 @@ function ghIssueClose(subject: string): boolean {
     logger.warn(`gh issue close failed for ${subject}`);
     return false;
   }
+}
+
+export function clampPollInterval(value: unknown): number {
+  const n = Number.parseInt(String(value ?? POLL_INTERVAL_DEFAULT_SECONDS), 10);
+  if (!Number.isFinite(n)) return POLL_INTERVAL_DEFAULT_SECONDS;
+  return Math.min(Math.max(n, POLL_INTERVAL_MIN_SECONDS), 86_400);
+}
+
+/** Exported for unit tests; decides whether an automation's per-row interval has elapsed. */
+export function shouldSkipPoll(now: number, lastProcessedAt: string | null, intervalSeconds: number): boolean {
+  if (!lastProcessedAt) return false;
+  const lastMs = Date.parse(lastProcessedAt);
+  if (!Number.isFinite(lastMs)) return false;
+  return now - lastMs < intervalSeconds * 1000;
 }

@@ -74,7 +74,8 @@ beforeAll(() => {
     CREATE TABLE github_automations (
       id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, board_id TEXT NOT NULL, repository_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
-      rules TEXT NOT NULL DEFAULT '["issue.opened","pr.merged"]', last_processed_at TEXT,
+      rules TEXT NOT NULL DEFAULT '["issue.opened","pr.merged"]', poll_interval_seconds INTEGER NOT NULL DEFAULT 60,
+      last_processed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (board_id, repository_id)
     );
@@ -142,6 +143,35 @@ describe("automation rules", () => {
     expect(updated?.name).toBe("renamed");
     expect(await deleteAutomation(dbFns as any, "owner-1", automation.id)).toBe(true);
     expect(await getAutomation(dbFns as any, "owner-1", automation.id)).toBeNull();
+  });
+
+  it("defaults poll_interval_seconds to 60 and persists it on create", async () => {
+    const automation = await createAutomation(dbFns as any, "owner-1", {
+      board_id: "board-1",
+      repository_id: "repo-1",
+      agent_id: "agent-1",
+    });
+    expect(automation.poll_interval_seconds).toBe(60);
+  });
+
+  it("clamps poll_interval_seconds into [30, 86400] on create and update", async () => {
+    const tooLow = await createAutomation(dbFns as any, "owner-1", {
+      board_id: "board-1",
+      repository_id: "repo-1",
+      agent_id: "agent-1",
+      poll_interval_seconds: 5,
+    });
+    expect(tooLow.poll_interval_seconds).toBe(30);
+
+    const tooHigh = await updateAutomation(dbFns as any, "owner-1", tooLow.id, {
+      poll_interval_seconds: 999_999,
+    });
+    expect(tooHigh?.poll_interval_seconds).toBe(86_400);
+
+    const ok = await updateAutomation(dbFns as any, "owner-1", tooLow.id, {
+      poll_interval_seconds: 300,
+    });
+    expect(ok?.poll_interval_seconds).toBe(300);
   });
 });
 

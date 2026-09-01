@@ -17,6 +17,7 @@ export interface GithubAutomation {
   name: string;
   enabled: number;
   rules: string;
+  poll_interval_seconds: number;
   last_processed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -52,6 +53,7 @@ export interface CreateAutomationInput {
   agent_id: string;
   enabled?: boolean;
   rules?: string[];
+  poll_interval_seconds?: number;
 }
 
 export interface ReportAutomationEventInput {
@@ -65,9 +67,18 @@ const EVENT_TYPES: AutomationEventType[] = ["issue.opened", "pr.created", "issue
 /** Rule names accepted in the rules[] column; pr.merged is a poller directive, not an event. */
 const RULE_NAMES: string[] = [...EVENT_TYPES, "pr.merged"];
 const TERMINAL_TASK_STATUSES = new Set(["done", "cancelled"]);
+const POLL_INTERVAL_MIN_SECONDS = 30;
+const POLL_INTERVAL_MAX_SECONDS = 86_400;
+const POLL_INTERVAL_DEFAULT_SECONDS = 60;
 
 function parseAutomation<T extends GithubAutomation>(row: T): T {
   return { ...row, rules: row.rules ?? "[]" };
+}
+
+function clampPollInterval(value: unknown): number {
+  const n = Number.parseInt(String(value ?? POLL_INTERVAL_DEFAULT_SECONDS), 10);
+  if (!Number.isFinite(n)) return POLL_INTERVAL_DEFAULT_SECONDS;
+  return Math.min(Math.max(n, POLL_INTERVAL_MIN_SECONDS), POLL_INTERVAL_MAX_SECONDS);
 }
 
 function parseEvent(row: GithubAutomationEvent): GithubAutomationEvent {
@@ -105,15 +116,28 @@ export async function createAutomation(db: D1, ownerId: string, input: CreateAut
       throw new HTTPException(400, { message: `Unknown automation rule: ${rule}` });
     }
   }
+  const pollIntervalSeconds = clampPollInterval(input.poll_interval_seconds);
 
   const name = (input.name ?? "GitHub automation").slice(0, 200);
   try {
     const result = await db
       .prepare(
-        `INSERT INTO github_automations (id, owner_id, board_id, repository_id, agent_id, name, enabled, rules, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO github_automations (id, owner_id, board_id, repository_id, agent_id, name, enabled, rules, poll_interval_seconds, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(id, ownerId, input.board_id, input.repository_id, input.agent_id, name, input.enabled === false ? 0 : 1, JSON.stringify(rules), now, now)
+      .bind(
+        id,
+        ownerId,
+        input.board_id,
+        input.repository_id,
+        input.agent_id,
+        name,
+        input.enabled === false ? 0 : 1,
+        JSON.stringify(rules),
+        pollIntervalSeconds,
+        now,
+        now,
+      )
       .run();
     if ((result.meta?.changes ?? 0) === 0) throw new HTTPException(409, { message: "Automation already exists for this board and repository" });
   } catch (err) {
@@ -186,7 +210,7 @@ export async function updateAutomation(
   db: D1,
   ownerId: string,
   automationId: string,
-  patch: { name?: string; enabled?: boolean; rules?: string[] },
+  patch: { name?: string; enabled?: boolean; rules?: string[]; poll_interval_seconds?: number },
 ): Promise<GithubAutomation | null> {
   const existing = await getAutomation(db, ownerId, automationId);
   if (!existing) return null;
@@ -208,6 +232,10 @@ export async function updateAutomation(
     }
     sets.push("rules = ?");
     binds.push(JSON.stringify(patch.rules));
+  }
+  if (patch.poll_interval_seconds !== undefined) {
+    sets.push("poll_interval_seconds = ?");
+    binds.push(clampPollInterval(patch.poll_interval_seconds));
   }
   binds.push(automationId, ownerId);
   await db
