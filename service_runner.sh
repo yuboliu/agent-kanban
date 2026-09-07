@@ -409,6 +409,35 @@ step_local_start() {
   tail -n 30 "$(runner_log)" 2>/dev/null >&2 || true
 }
 
+# Cold-boot gap: on a fresh boot cmd_run reaches step_local_start before the
+# API is listening, that check no-ops, and the final `exec` replaces this
+# process — nothing would ever retry (observed: the runner stayed down for
+# days after a reboot until started by hand). This watcher retries in the
+# background until the runner is up. It closes its inherited copy of lock fd 9
+# (otherwise it would keep the singleton held after the server dies) and exits
+# when the singleton lock frees, so no orphan watchers accumulate across
+# systemd respawns. `ak local_start` is idempotent (live-pid check), and only
+# output *changes* are logged to keep the service log quiet.
+start_local_runner_watcher() {
+  [ "$DO_LOCAL_START" = "1" ] || return 0
+  command -v ak >/dev/null 2>&1 || return 0
+  (
+    exec 9>&-
+    local prev=""
+    while service_running; do
+      if port_listening && ! runner_pid_alive; then
+        local out
+        out="$(ak local_start --api-url "$LOCAL_API_URL" 2>&1 || true)"
+        if [ "$out" != "$prev" ]; then
+          printf '%s [runner-watcher] %s\n' "$(date '+%F %T')" "$out" >> "$LOG_FILE"
+          prev="$out"
+        fi
+      fi
+      sleep 20
+    done
+  ) &
+}
+
 step_banner() {
   printf '\n%s────────────────────────────────────────────────────────%s\n' "$CY" "$R"
   printf '%s  Agent Kanban — service runner%s\n' "$B" "$R"
@@ -448,12 +477,14 @@ cmd_run() {
   step_migrate
   step_env
   load_env
-  # Bring up the local AK runtime only when the API is already reachable (e.g.
-  # systemd Restart=on-failure respawn after a crash). On a cold boot the UI
-  # isn't listening yet, so this no-ops — the runtime starts on the next respawn.
+  # Bring up the local AK runtime immediately when the API is already
+  # reachable (e.g. systemd Restart=on-failure respawn after a crash).
   step_local_start
   step_banner
   acquire_lock
+  # Cold boot: the API isn't up yet, so step_local_start no-opped above. Arm
+  # the background watcher that retries once the port is listening.
+  start_local_runner_watcher
   info "Starting Node server on $HOST:$PORT (pure-local: React SPA + Hono API + WebSocket relay). Ctrl-C to stop."
   cd "$WEB_DIR"
   exec env AK_HOST="$HOST" AK_PORT="$PORT" npx tsx server/node/cli.ts
