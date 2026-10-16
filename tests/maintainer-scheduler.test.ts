@@ -3,6 +3,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalMaintainerScheduler } from "../packages/cli/src/daemon/maintainerScheduler.js";
 
+// Isolate the runtime so ticks never spawn a real provider (the scheduler
+// drives LocalMaintainerRuntime.processNextRun, which would otherwise launch
+// the real `claude` binary — and with a valid UUID sessionId it now actually
+// starts and hangs the test).
+vi.mock("../packages/cli/src/providers/registry.js", () => ({
+  getProvider: () => ({
+    name: "claude",
+    label: "Claude Code",
+    execute: vi.fn().mockResolvedValue({ events: (async function* () {})(), abort: vi.fn() }),
+  }),
+  normalizeRuntime: (runtime: string) => runtime,
+}));
+
 const NOW = Date.parse("2026-08-25T12:00:00.000Z");
 
 function maintainer(overrides: Record<string, unknown> = {}) {

@@ -8,6 +8,7 @@
  * one claimed run at a time and renews the lease while the provider runs.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -126,8 +127,8 @@ export class LocalMaintainerRuntime {
     const provider = getProvider(runtime);
     if (!provider) throw new Error(`No local provider available for runtime "${runtime}"`);
 
-    const sessionId = `maint-${run.id}`;
-    const cwd = mkdtempSync(join(tmpdir(), `ak-maintainer-${sessionId.slice(0, 8)}-`));
+    const sessionId = randomUUID();
+    const cwd = mkdtempSync(join(tmpdir(), `ak-maintainer-${run.id}-`));
     try {
       writeFileSync(
         join(cwd, "CONTEXT.md"),
