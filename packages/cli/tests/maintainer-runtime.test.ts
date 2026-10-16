@@ -59,8 +59,15 @@ describe("LocalMaintainerRuntime", () => {
     expect(processed).toBe(true);
     expect(client.claimMaintainerRun).toHaveBeenCalledWith("board-1", "m-1");
     expect(fakeProvider.execute).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: "maint-run-1", taskContext: expect.stringContaining("board-1") }),
+      expect.objectContaining({ taskContext: expect.stringContaining("board-1") }),
     );
+    // Regression: sessionId must be a UUID — the spawned `claude --session-id`
+    // rejects anything else (the old `maint-${run.id}` form exited 1 at startup).
+    const executeOpts = fakeProvider.execute.mock.calls[0][0] as { sessionId: string; cwd: string };
+    expect(executeOpts.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // The scratch workspace keeps using the run id, not the session id.
+    expect(executeOpts.cwd).toContain("ak-maintainer-run-1-");
+    expect(executeOpts.cwd).not.toContain(executeOpts.sessionId);
     expect(client.completeMaintainerRun).toHaveBeenCalledWith("board-1", "m-1", "run-1", null);
     expect(client.failMaintainerRun).not.toHaveBeenCalled();
   });
